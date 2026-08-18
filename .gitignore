@@ -1,0 +1,21 @@
+target/
+data/
+*.db
+*.trace.db
+.mvn/
+!.mvn/wrapper/maven-wrapper.jar
+
+# env / secrets
+.butler.env
+*.env
+!*.env.example
+
+# logs / runtime
+*.log
+/tmp/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.iml

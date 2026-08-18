@@ -1,0 +1,104 @@
+spring:
+  application:
+    name: butler
+  profiles:
+    active: dev
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: false
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.autoconfigure.openai.OpenAiAutoConfiguration
+
+butler:
+  memory:
+    # 每 2 小时执行一次增量提炼
+    cron: "0 0 */2 * * *"
+  archive:
+    # 归档快照保留天数，超时由定时任务清理
+    retention-days: 30
+    # 每天 03:30 清理过期归档
+    purge-cron: "0 30 3 * * *"
+  session:
+    # 会话 token 签名密钥（生产环境务必通过 BUTLER_SESSION_SECRET 环境变量覆盖）
+    secret: ${BUTLER_SESSION_SECRET:butler-dev-secret-change-me}
+    # token 有效期（小时），默认 1 天；页面保持打开时每 6 小时自动续期
+    ttl-hours: 24
+  test-user:
+    # 启动时自动创建的测试账号密码
+    password: ${TEST_USER_PASSWORD:test123}
+
+# Embedding（火山方舟 doubao-embedding-vision 等），用于知识库语义向量化
+# endpoint 配置为 ARK 推理接入点 id（ep-xxxx）；未配置则语义检索降级为关键词匹配
+embedding:
+  api-key: ${ARK_API_KEY:}
+  base-url: ${ARK_BASE_URL:https://ark.cn-beijing.volces.com/api/plan/v3}
+  endpoint: ${ARK_EMBEDDING_ENDPOINT:doubao-embedding-vision}
+  dimension: ${EMBEDDING_DIM:2048}
+
+# Milvus 向量库（本地 Milvus Lite / standalone / 集群同一套连接参数）
+milvus:
+  host: ${MILVUS_HOST:127.0.0.1}
+  port: ${MILVUS_PORT:19531}
+  collection: ${MILVUS_COLLECTION:butler_knowledge}
+
+# 豆包搜索 Custom 版（联网检索）独立 key；留空则联网工具返回未配置
+search.api-key: ${SEARCH_API_KEY:}
+
+# 语音识别（火山流式 ASR 单流）；ASR_API_KEY 留空时复用 ARK_API_KEY
+asr:
+  ws-url: ${ASR_WS_URL:wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream}
+  access-key: ${ASR_API_KEY:${ARK_API_KEY:}}
+  resource-id: ${ASR_RESOURCE_ID:volc.seedasr.sauc.duration}
+  model: ${ASR_MODEL:bigmodel}
+  sample-rate: 16000
+  segment-ms: 200
+
+# 语音合成（火山 TTS 单流 WebSocket）；TTS_API_KEY 留空时复用 ARK_API_KEY
+tts:
+  ws-url: ${TTS_WS_URL:wss://openspeech.bytedance.com/api/v3/plan/tts/unidirectional/stream}
+  access-key: ${TTS_API_KEY:${ARK_API_KEY:}}
+  resource-id: ${TTS_RESOURCE_ID:seed-tts-2.0}
+  model: ${TTS_MODEL:doubao-seed-tts-2.0}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
+  datasource:
+    url: jdbc:h2:file:./data/butler;MODE=MySQL;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+# Spring AI：OpenAI 兼容端点
+# - 火山方舟 Ark:  ARK_API_KEY + ARK_BASE_URL + ARK_MODEL
+# - DashScope 兼容模式: DASHSCOPE_API_KEY + base-url=https://dashscope.aliyuncs.com/compatible-mode/v3
+# 未配置 api-key 时自动降级为 NoopLlmAdapter（不调用模型，接口仍可调试）
+spring.ai.openai.api-key: ${LLM_API_KEY:${ARK_API_KEY:}}
+spring.ai.openai.base-url: ${LLM_BASE_URL:${ARK_BASE_URL:https://ark.cn-beijing.volces.com/api/plan/v3}}
+spring.ai.openai.chat.options.model: ${LLM_MODEL:${ARK_MODEL:ark-code-latest}}
+spring.ai.openai.chat.completions-path: /chat/completions
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:butler}?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${DB_USER:root}
+    password: ${DB_PASSWORD:}
+  jpa:
+    hibernate:
+      ddl-auto: update

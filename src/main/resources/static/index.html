@@ -1,0 +1,1644 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智能管家</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; background: #f5f6f8; height: 100vh; display: flex; }
+  .sidebar { width: 270px; background: #1f2430; color: #d7dae0; display: flex; flex-direction: column; }
+  .sidebar h1 { font-size: 16px; padding: 18px 16px; border-bottom: 1px solid #2d3340; }
+  .session-list { flex: 1; overflow-y: auto; padding: 8px; }
+  .session-item { padding: 10px 12px; border-radius: 8px; cursor: pointer; margin-bottom: 4px; font-size: 14px; display: flex; flex-direction: column; gap: 3px; }
+  .session-item:hover { background: #2d3340; }
+  .session-item.active { background: #3b6ef5; color: #fff; }
+  .session-item .sub { font-size: 12px; opacity: .7; }
+  .session-item .head { display:flex; justify-content:space-between; align-items:center; gap:6px;}
+  .session-item .del { opacity:0; font-size:12px; color:#ff8a8a; cursor:pointer; padding:0 4px; border-radius:4px;}
+  .session-item:hover .del { opacity:1; }
+  .session-item .del:hover { background:rgba(255,255,255,.15); }
+  .session-item.archived { opacity:.55; }
+  .new-goal { padding: 12px; border-top: 1px solid #2d3340; }
+  .new-goal button { width: 100%; padding: 10px; background: #3b6ef5; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  .new-goal button:hover { background: #2f5dd0; }
+  .chat { flex: 1; display: flex; flex-direction: column; }
+  .chat-header { padding: 16px 24px; background: #fff; border-bottom: 1px solid #e6e8ec; font-size: 16px; font-weight: 600; display:flex; justify-content:space-between; align-items:center;}
+  .chat-header .tag { font-size:12px; font-weight:400; color:#8a909b; background:#f0f2f5; padding:3px 8px; border-radius:10px;}
+  .messages { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+  .msg { max-width: 75%; padding: 12px 16px; border-radius: 12px; line-height: 1.6; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: #3b6ef5; color: #fff; border-bottom-right-radius: 4px; }
+  .msg.assistant { align-self: flex-start; background: #fff; border: 1px solid #e6e8ec; border-bottom-left-radius: 4px; }
+  .msg.system { align-self: center; background: #eef4ff; color:#3b6ef5; border:1px dashed #b9ccff; font-size:13px; max-width:60%; text-align:center;}
+  .reasoning-box { margin-bottom: 8px; background: #f5f6f8; border: 1px solid #e6e8ec; border-radius: 8px; font-size: 12px; color: #8a909b; overflow: hidden; }
+  .reasoning-box .r-head { padding: 6px 10px; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+  .reasoning-box .r-head:hover { background: #eef0f3; }
+  .reasoning-box .r-arrow { font-size: 10px; transition: transform .15s; }
+  .reasoning-box .r-body { padding: 0 10px 8px; white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
+  .reasoning-box.collapsed .r-body { display: none; }
+  .cursor { display: inline-block; width: 7px; height: 14px; background: #3b6ef5; margin-left: 2px; animation: blink 1s infinite; vertical-align: middle; }
+  @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+  .input-bar { padding: 16px 24px; background: #fff; border-top: 1px solid #e6e8ec; display: flex; gap: 12px; }
+  .input-bar input { flex: 1; padding: 12px 16px; border: 1px solid #d8dbe0; border-radius: 8px; font-size: 14px; outline: none; }
+  .input-bar input:focus { border-color: #3b6ef5; }
+  .input-bar button { padding: 12px 24px; background: #3b6ef5; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  .input-bar button:disabled { background: #a9b4cc; cursor: not-allowed; }
+  .input-bar .mic-btn { background:#f3f4f6; color:#3b6ef5; padding:12px 16px; }
+  .input-bar .mic-btn.recording { background:#e5484d; color:#fff; animation: micpulse 1.2s infinite; }
+  @keyframes micpulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+  .voice-status { padding:6px 24px; font-size:12px; color:#3b6ef5; background:#f5f8ff; border-top:1px solid #e0e8ff; }
+  .voice-status.error { color:#e5484d; background:#fdecec; }
+  .msg-card { align-self: flex-start; max-width: 90%; width: 100%; display: flex; flex-direction: column; gap: 10px; }
+  .goal-card { border:1px solid #c7d6ff; background:#f7f9ff; border-radius:10px; padding:12px 14px; }
+  .goal-card .gc-title { font-weight:600; color:#1f3a8a; margin-bottom:8px; }
+  .goal-card .gc-sec { margin-top:8px; }
+  .goal-card .gc-sec b { color:#2b3445; }
+  .goal-card .gc-row { font-size:13px; color:#3a4252; margin:3px 0 3px 4px; }
+  .goal-card .gc-row .unc { color:#b56800; font-size:11px; margin-left:4px; }
+  .goal-card .gc-actions { margin-top:12px; display:flex; gap:10px; }
+  .goal-card button { padding:7px 16px; border-radius:7px; font-size:13px; cursor:pointer; border:none; }
+  .goal-card .gc-ok { background:#3b6ef5; color:#fff; }
+  .goal-card .gc-edit { background:#eef1f6; color:#3a4252; }
+  .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); align-items: center; justify-content: center; z-index: 10; }
+  .modal-bg.show { display: flex; }
+  .modal { background: #fff; border-radius: 12px; padding: 24px; width: 460px; max-height:85vh; overflow-y:auto; display: flex; flex-direction: column; gap: 12px; }
+  .modal h2 { font-size: 16px; margin-bottom:4px;}
+  .modal label { font-size:13px; color:#555; margin-top:4px;}
+  .modal input, .modal select, .modal textarea { padding: 10px; border: 1px solid #d8dbe0; border-radius: 8px; font-size: 14px; width:100%; font-family:inherit;}
+  .modal textarea { min-height:60px; resize:vertical;}
+  .modal .row { display: flex; gap: 8px; justify-content: flex-end; margin-top:8px;}
+  .modal .row button { padding: 9px 18px; border-radius: 8px; border: none; cursor: pointer; }
+  .modal .row .cancel { background: #eef0f3; }
+  .modal .row .ok { background: #3b6ef5; color: #fff; }
+  .focus-edit-row { display:flex; gap:10px; align-items:flex-start; font-size:13px; font-weight:normal; padding:6px 4px; border-bottom:1px solid #f0f1f4; cursor:pointer; }
+  .focus-edit-row:last-child { border-bottom:none; }
+  .focus-edit-row input[type=checkbox] { flex:0 0 auto; margin:3px 0 0; width:16px; height:16px; cursor:pointer; }
+  .focus-edit-text { flex:1 1 auto; min-width:0; line-height:1.5; }
+  .tasks-panel { width: 280px; background: #fff; border-left: 1px solid #e6e8ec; display: none; flex-direction: column; }
+  .tasks-panel.show { display: flex; }
+  .tasks-panel h3 { font-size: 14px; padding: 16px 18px; border-bottom: 1px solid #e6e8ec; }
+  .tasks-panel .task-list { flex:1; overflow-y:auto; padding: 10px 14px; display:flex; flex-direction:column; gap:8px;}
+  .task-item { padding: 10px 12px; background:#f7f8fa; border:1px solid #eceef2; border-radius:8px; font-size:13px; line-height:1.5;}
+  .task-item.done { opacity:.55; text-decoration: line-through; }
+  /* 紧急层级：已触发提醒/到执行日（橙），已过期待确认（红） */
+  .task-item.due-today { background:#fff6ec; border-color:#ffcf9e; border-left:3px solid #e8893a; }
+  .task-item.due-today .urgent-tag { background:#e8893a; color:#fff; }
+  .task-item.overdue { background:#fdecec; border-color:#f5b3b3; border-left:3px solid #e5484d; }
+  .task-item.overdue .urgent-tag { background:#e5484d; color:#fff; }
+  .task-item.reminded { box-shadow: 0 0 0 1px rgba(59,110,245,.25) inset; }
+  .task-item.timed { background:#eef4ff; border-color:#c7d8ff; border-left:3px solid #3b6ef5; }
+  .task-item.timed .timed-tag { display:inline-flex; align-items:center; gap:3px; font-size:11px; font-weight:700; color:#fff; background:#3b6ef5; border-radius:10px; padding:1px 8px; margin-left:6px; white-space:nowrap; }
+  .task-item.timed.done { background:#f7f8fa; border-color:#eceef2; border-left:3px solid #d8dbe0; }
+  .task-item.timed.done .timed-tag { background:#9aa0aa; }
+  .urgent-tag { font-size:11px; padding:1px 7px; border-radius:10px; font-weight:600; margin-left:6px; white-space:nowrap; }
+  .complete-btn { flex:none; padding:4px 10px; font-size:12px; background:#eef5ec; color:#2e9e5b; border:1px solid #cfe8d6; border-radius:6px; cursor:pointer; white-space:nowrap;}
+  .complete-btn:hover { background:#2e9e5b; color:#fff; }
+  .del-btn { flex:none; width:26px; height:26px; padding:0; font-size:13px; line-height:1; background:#f3f4f6; color:#9aa0aa; border:1px solid #e5e7eb; border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+  .del-btn:hover { background:#e5484d; color:#fff; border-color:#e5484d; }
+  .task-item .meta { margin-top:5px; font-size:11px; color:#8a909b; display:flex; gap:8px; flex-wrap:wrap;}
+  .task-item .badge-due { color:#e8893a; }
+  .task-item .badge-remind { color:#3b6ef5; }
+</style>
+</head>
+<body>
+<div class="sidebar">
+  <h1>🤖 智能管家</h1>
+  <div id="accountBar" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin:6px 0 10px;font-size:12px;color:#5b6470;">
+    <span id="accountName">未登录</span>
+    <span style="display:flex;gap:6px;">
+      <a href="#" onclick="openAuth('login');return false;" style="color:#3b6ef5;">登录</a>
+      <a href="#" onclick="openAuth('register');return false;" style="color:#3b6ef5;">注册</a>
+      <a href="#" onclick="logout();return false;" id="logoutLink" style="display:none;color:#e5484d;">退出</a>
+    </span>
+  </div>
+  <div class="session-list" id="sessionList"></div>
+  <div class="new-goal">
+    <button onclick="openModal()">+ 创建新目标</button>
+  </div>
+</div>
+<div class="chat">
+  <div class="chat-header">
+    <span id="chatTitle">🏠 主对话</span>
+    <span style="display:flex;gap:8px;align-items:center;">
+      <button id="focusEditBtn" class="complete-btn" style="display:none;" onclick="openFocusEditor()">⚙ 关注项</button>
+      <span id="knowBadge" style="display:none;background:#fff4e5;color:#b56800;border:1px solid #ffd9a8;border-radius:12px;padding:2px 8px;font-size:12px;cursor:pointer;" onclick="toggleKnowledgePanel()">🧠 待确认知识 <b id="knowBadgeCount">0</b></span>
+      <span class="tag" id="chatTag">全局总入口</span>
+    </span>
+  </div>
+  <div id="locBanner" style="display:none;align-items:center;gap:8px;padding:6px 12px;font-size:12px;background:#eef4ff;border-bottom:1px solid #d6e4ff;color:#3556a0;"></div>
+  <div id="materialsBar" style="display:none;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 16px;font-size:12px;background:#fafbff;border-bottom:1px solid #e6e8ec;"></div>
+  <div class="messages" id="messages"></div>
+  <div class="input-bar">
+    <input id="input" name="msg" autocomplete="off" autocapitalize="off" placeholder="输入消息，Enter 发送..." onkeydown="if(event.key==='Enter')send()">
+    <button id="micBtn" onclick="toggleVoice()" title="语音输入" class="mic-btn">🎤</button>
+    <button id="sendBtn" onclick="send()">发送</button>
+  </div>
+  <div id="voiceStatus" class="voice-status" style="display:none;"></div>
+</div>
+<div class="tasks-panel" id="tasksPanel">
+  <div id="knowledgePending" style="border-bottom:1px solid #e6e8ec;padding:10px 14px;display:none;"></div>
+  <h3>📋 待办任务</h3>
+  <div class="task-list" id="taskList"></div>
+</div>
+
+<div class="modal-bg" id="focusModalBg" style="display:none;">
+  <div class="modal" style="width:560px;max-width:92vw;">
+    <h2>关注项设置</h2>
+    <div id="focusEditorList" style="display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow:auto;"></div>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button onclick="saveFocusAreas()" style="flex:1;">保存</button>
+      <button onclick="document.getElementById('focusModalBg').style.display='none'" style="flex:1;background:#eee;">取消</button>
+    </div>
+  </div>
+</div>
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <h2>创建新目标</h2>
+    <label>计划类型</label>
+    <select id="goalType" onchange="renderFields()"></select>
+    <div id="fieldsWrap"></div>
+    <div id="focusWrap" style="display:none; flex-direction:column; gap:8px; margin-top:4px;"></div>
+    <div id="confirmWrap" style="display:none; flex-direction:column; gap:6px; margin-top:8px; padding:12px; background:#f7f9ff; border:1px solid #d8e2ff; border-radius:8px; font-size:13px;"></div>
+    <label>补充说明（可选）</label>
+    <textarea id="goalText" placeholder="描述你的目标..."></textarea>
+    <div class="row">
+      <button class="cancel" onclick="closeModal()">取消</button>
+      <button class="ok" id="modalOkBtn" onclick="onModalOk()">创建</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="proposalModalBg" style="display:none;">
+  <div class="modal" style="max-width:480px;">
+    <h2>确认变更信息</h2>
+    <div style="font-size:12px;color:#8a909b;margin-bottom:4px;">系统根据你的消息整理出以下变更，确认后再生效；放弃则不做修改。</div>
+    <div id="proposalBody" style="display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow:auto;"></div>
+    <div class="row">
+      <button class="cancel" onclick="discardProposal()">放弃</button>
+      <button class="ok" onclick="applyProposal()">确认应用</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="authModalBg" style="display:none;">
+  <div class="modal" style="max-width:360px;">
+    <h2 id="authTitle">登录</h2>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <input id="authUsername" name="username" autocomplete="username" placeholder="账号" style="padding:8px;border:1px solid #d0d5dd;border-radius:6px;">
+      <input id="authPassword" type="password" name="password" autocomplete="current-password" placeholder="密码" style="padding:8px;border:1px solid #d0d5dd;border-radius:6px;">
+      <input id="authNickname" name="nickname" autocomplete="off" placeholder="昵称（注册时填写）" style="padding:8px;border:1px solid #d0d5dd;border-radius:6px;display:none;">
+      <div id="authError" style="color:#e5484d;font-size:12px;min-height:16px;"></div>
+    </div>
+    <div class="row">
+      <button class="cancel" onclick="closeAuth()">取消</button>
+      <button class="ok" onclick="submitAuth()">确定</button>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:12px;">
+      <a id="authSwitch" href="#" onclick="switchAuthMode();return false;" style="color:#3b6ef5;">没有账号？去注册</a>
+      <span style="color:#9aa0a6;font-size:11px;">测试账号 test / test123</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const SESSION_KEY = 'butler_session';
+const REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let SESSION = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+let CURRENT_USER = SESSION && SESSION.user ? SESSION.user : null;
+let USER_ID = CURRENT_USER ? CURRENT_USER.id : 0;
+let refreshTimer = null;
+const originalFetch = window.fetch.bind(window);
+
+function authToken() { return SESSION ? SESSION.token : null; }
+function sessionExpired(session) {
+  if (!session || !session.expiresAt) return true;
+  return new Date(session.expiresAt).getTime() <= Date.now();
+}
+
+window.fetch = function(input, init) {
+  const url = typeof input === 'string' ? input : (input && input.url) || '';
+  const isApi = url.startsWith('/api/');
+  const isPublic = url === '/api/users/login' || url === '/api/users/register';
+  if (isApi && !isPublic) {
+    init = init || {};
+    init.headers = Object.assign({}, init.headers || {});
+    if (!init.headers['Authorization'] && authToken()) init.headers['Authorization'] = 'Bearer ' + authToken();
+  }
+  return originalFetch(input, init).then(res => {
+    if (isApi && !isPublic && res.status === 401) handleSessionExpired();
+    return res;
+  });
+};
+
+function handleSessionExpired() {
+  clearSession();
+  renderAccount();
+  if (document.getElementById('authModalBg').style.display !== 'flex') openAuth('login');
+}
+let current = { type: 'main', subSessionId: null };
+let scenarios = [];
+let sending = false;
+let pendingProposal = null;
+
+function renderAccount() {
+  const nameEl = document.getElementById('accountName');
+  const logout = document.getElementById('logoutLink');
+  if (CURRENT_USER) {
+    nameEl.textContent = (CURRENT_USER.nickname || CURRENT_USER.username) + '（' + (CURRENT_USER.userTypeLabel || CURRENT_USER.userType) + '）';
+    logout.style.display = 'inline';
+  } else {
+    nameEl.textContent = '未登录';
+    logout.style.display = 'none';
+  }
+}
+
+function logout() {
+  if (SESSION) originalFetch('/api/session/logout', { method:'POST', headers:{ 'Authorization':'Bearer '+SESSION.token }}).catch(()=>{});
+  clearSession();
+  renderAccount();
+  document.getElementById('sessionList').innerHTML = '';
+  document.getElementById('messages').innerHTML = '';
+  openAuth('login');
+}
+
+let authMode = 'login';
+function openAuth(mode) {
+  authMode = mode;
+  document.getElementById('authTitle').textContent = mode === 'register' ? '注册' : '登录';
+  document.getElementById('authNickname').style.display = mode === 'register' ? 'block' : 'none';
+  const sw = document.getElementById('authSwitch');
+  if (sw) sw.textContent = mode === 'register' ? '已有账号？去登录' : '没有账号？去注册';
+  document.getElementById('authError').textContent = '';
+  document.getElementById('authModalBg').style.display = 'flex';
+}
+function switchAuthMode() { openAuth(authMode === 'register' ? 'login' : 'register'); }
+function closeAuth() { document.getElementById('authModalBg').style.display = 'none'; }
+
+async function submitAuth() {
+  const username = document.getElementById('authUsername').value.trim();
+  const password = document.getElementById('authPassword').value;
+  const nickname = document.getElementById('authNickname').value.trim();
+  const errEl = document.getElementById('authError');
+  errEl.textContent = '';
+  try {
+    const url = authMode === 'register' ? '/api/users/register' : '/api/users/login';
+    const res = await fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, nickname })
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.message || ('操作失败 (' + res.status + ')'));
+    }
+    const session = await res.json();
+    saveSession(session);
+    closeAuth();
+    bootstrap();
+  } catch (e) { errEl.textContent = e.message; }
+}
+
+function saveSession(session) {
+  SESSION = session;
+  CURRENT_USER = session.user;
+  USER_ID = session.user.id;
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  renderAccount();
+  scheduleRefresh();
+}
+
+function clearSession() {
+  SESSION = null; CURRENT_USER = null; USER_ID = 0;
+  localStorage.removeItem(SESSION_KEY);
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+}
+
+async function refreshSession() {
+  if (!SESSION) return;
+  try {
+    const res = await originalFetch('/api/session/refresh', { method:'POST', headers:{ 'Authorization':'Bearer '+SESSION.token }});
+    if (!res.ok) throw new Error('refresh failed');
+    const s = await res.json();
+    saveSession(s);
+  } catch(e) { handleSessionExpired(); }
+}
+
+function scheduleRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(refreshSession, REFRESH_INTERVAL_MS);
+}
+
+function bootstrap() {
+  if (!SESSION || sessionExpired(SESSION)) { clearSession(); openAuth('login'); return; }
+  scheduleRefresh();
+  init();
+}
+
+async function init() {
+  const res = await fetch('/api/scenarios');
+  scenarios = await res.json();
+  const sel = document.getElementById('goalType');
+  sel.innerHTML = scenarios.map(s => `<option value="${s.type}">${s.displayName}</option>`).join('');
+  renderFields();
+  loadHistory();
+  primeLocation();
+}
+
+function renderFields() {
+  const type = document.getElementById('goalType').value;
+  const sc = scenarios.find(s => s.type === type);
+  const wrap = document.getElementById('fieldsWrap');
+  if (!sc) { wrap.innerHTML=''; renderFocusAreas(); return; }
+  wrap.innerHTML = sc.fields.filter(f => f.type !== 'HIDDEN').map(f => {
+    const star = f.required ? ' *' : '';
+    const req = `data-required="${f.required}"`;
+    if (f.type === 'SELECT') {
+      const opts = (f.options||[]).map(o => `<option value="${o}">${o}</option>`).join('');
+      return `<label>${f.label}${star}</label>
+        <select data-key="${f.key}" ${req} onchange="renderFocusAreas()">${opts}</select>`;
+    }
+    if (f.type === 'DATE') {
+      return `<label>${f.label}${star}</label>
+        <input type="date" data-key="${f.key}" ${req}" placeholder="${f.placeholder||''}">`;
+    }
+    if (f.type === 'TEXTAREA') {
+      return `<label>${f.label}${star}</label>
+        <textarea data-key="${f.key}" ${req} placeholder="${f.placeholder||''}"></textarea>`;
+    }
+    if (f.type === 'NUMBER') {
+      return `<label>${f.label}${star}</label>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <input type="number" data-key="${f.key}" ${req} placeholder="${f.placeholder||''}" style="flex:1;">
+          <span style="color:#8a909b;font-size:13px;">${f.unit||''}</span>
+        </div>`;
+    }
+    return `<label>${f.label}${star}</label>
+      <input data-key="${f.key}" ${req} placeholder="${f.placeholder||''}">`;
+  }).join('');
+  renderFocusAreas();
+  autoLocateCity();
+}
+
+// 浏览器定位经纬度 -> 后端逆地理解析出城市/区县（避免前端跨域/密钥问题）
+function locateCity(timeoutMs = 7000) {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error('unsupported')); return; }
+    navigator.geolocation.getCurrentPosition(async pos => {
+      try {
+        const latitude = pos.coords.latitude, longitude = pos.coords.longitude;
+        const r = await fetch(`/api/geo/reverse?lat=${latitude}&lon=${longitude}`);
+        const d = await r.json();
+        if (d && d.ok && d.label) resolve({ label: d.label, latitude, longitude });
+        else reject(new Error('reverse-failed'));
+      } catch (e) { reject(e); }
+    }, err => reject(err), { timeout: timeoutMs, enableHighAccuracy: false });
+  });
+}
+
+// 全局缓存用户定位；页面加载即尝试获取，供子对话/工具回退
+let _myLocation = null;
+let _locating = null;
+function primeLocation() {
+  if (_locating) return _locating;
+  if (!navigator.geolocation) return Promise.resolve(null);
+  _locating = locateCity(10000).then(async label => {
+    _myLocation = label;
+    try {
+      await fetch(`/api/users/location`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ city: label.label, latitude: label.latitude, longitude: label.longitude })
+      });
+    } catch (e) {}
+    return label;
+  }).catch(e => { _myLocation = null; return null; });
+  return _locating;
+}
+
+// 创建目标表单：自动尝试定位城市填入，失败则提示手填
+async function autoLocateCity() {
+  const input = document.querySelector('#fieldsWrap input[data-key="city"]');
+  if (!input || input.value) return;
+  input.placeholder = '正在定位所在城市...';
+  locateCity().then(label => {
+    if (!input.value) { input.value = label.label; input.placeholder = '已定位，可手动修改'; window._createLocation = label; }
+  }).catch(() => {
+    input.placeholder = '如：北京市朝阳区（未授权定位，可手动填写）';
+  });
+}
+
+function currentRole() {
+  const sel = document.querySelector('#fieldsWrap select[data-key="role"]');
+  return sel ? sel.value : '';
+}
+
+// 关注项依赖的英文 key 转中文展示
+function focusLabel(sc, key) {
+  const f = sc && sc.focusAreas && sc.focusAreas.find(x => x.key === key);
+  return f ? f.label : key;
+}
+function depText(sc, deps) {
+  if (!deps || !deps.length) return '';
+  return deps.map(d => focusLabel(sc, d)).join('、');
+}
+
+function renderFocusAreas() {
+  const type = document.getElementById('goalType').value;
+  const sc = scenarios.find(s => s.type === type);
+  const wrap = document.getElementById('focusWrap');
+  if (!sc || !sc.focusAreas || !sc.focusAreas.length) { wrap.style.display='none'; wrap.innerHTML=''; return; }
+  const role = currentRole();
+  // 准妈妈看 BOTH+FEMALE；准爸爸看全部（女方项也可订阅了解与协助）
+  const visible = sc.focusAreas.filter(f =>
+    f.audience === 'BOTH' || role.includes('准爸爸') ? true : f.audience === 'FEMALE' || f.audience === 'BOTH');
+  if (!visible.length) { wrap.style.display='none'; return; }
+  wrap.style.display='flex';
+  const groups = [
+    ['BOTH','共同关注'], ['FEMALE','准妈妈关注'], ['MALE','准爸爸关注']
+  ];
+  let html = '<label>重点关注项（带 * 为必选；勾选某项会自动带上它依赖的相关项，由后端处理）</label>';
+  groups.forEach(([aud, title]) => {
+    const items = visible.filter(f => f.audience === aud);
+    if (!items.length) return;
+    html += `<div style="font-size:12px;color:#8a909b;margin-top:6px;">${title}</div>`;
+    items.forEach(f => {
+      const lock = f.mandatory ? 'checked disabled' : (f.defaultSelected ? 'checked' : '');
+      const star = f.mandatory ? ' *' : '';
+      const dep = (f.dependsOn && f.dependsOn.length) ? ` <span style="color:#b8860b;">（依赖：${depText(sc, f.dependsOn)}，勾选后自动带上）</span>` : '';
+      const cursor = f.mandatory ? '' : 'cursor:pointer;';
+      html += `<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;font-weight:normal;${cursor}">
+        <input type="checkbox" data-focus="${f.key}" ${lock} style="margin-top:3px;">
+        <span><b>${f.label}${star}</b> — <span style="color:#8a909b;">${f.description}</span>${dep}</span></label>`;
+    });
+  });
+  wrap.innerHTML = html;
+}
+
+async function loadSessions() {
+  const res = await fetch('/api/sub-sessions');
+  const list = await res.json();
+  renderSessions(list);
+}
+
+function renderSessions(list) {
+  const el = document.getElementById('sessionList');
+  let html = `<div class="session-item ${current.type==='main'?'active':''}" onclick="selectMain()">
+      <div>🏠 主对话</div><div class="sub">全局总入口 · 可创建/回顾目标</div></div>`;
+  window._subScenario = {};
+  list.forEach(s => {
+    window._subScenario[s.id] = s.scenarioType;
+    const active = current.type==='sub' && current.subSessionId===s.id;
+    const name = (scenarios.find(x=>x.type===s.scenarioType)||{}).displayName || s.scenarioType;
+    const goalTitle = s.title ? escapeHtml(s.title) : '';
+    const archived = s.status && s.status !== 'ACTIVE';
+    html += `<div class="session-item ${active?'active':''} ${archived?'archived':''}">
+      <div class="head">
+        <span onclick="selectSub(${s.id},'${name}')" style="flex:1;cursor:pointer;">🎯 ${name}${goalTitle?` · ${goalTitle}`:''}${archived?'（已归档）':''}</span>
+        <span class="del" onclick="deleteSub(${s.id}, event)">🗑</span>
+      </div>
+      <div class="sub" onclick="selectSub(${s.id},'${name}')" style="cursor:pointer;">${goalTitle || (s.sessionDesc||'').slice(0,22)}</div></div>`;
+  });
+  el.innerHTML = html;
+}
+
+function selectMain() {
+  current = { type: 'main', subSessionId: null };
+  document.getElementById('focusEditBtn').style.display = 'none';
+  document.getElementById('chatTitle').textContent = '🏠 主对话';
+  document.getElementById('chatTag').textContent = '全局总入口';
+  document.getElementById('tasksPanel').classList.remove('show');
+  setLocBanner('', false);
+  loadHistory();
+}
+function selectSub(id, name) {
+  current = { type: 'sub', subSessionId: id };
+  document.getElementById('chatTitle').textContent = '🎯 ' + name;
+  document.getElementById('chatTag').textContent = '专属子对话';
+  document.getElementById('tasksPanel').classList.add('show');
+  document.getElementById('focusEditBtn').style.display = 'inline-block';
+  ensureSubLocation();
+  loadHistory();
+}
+
+function setLocBanner(html, display) {
+  const b = document.getElementById('locBanner');
+  if (!b) return;
+  b.style.display = display ? 'flex' : 'none';
+  b.innerHTML = html;
+}
+
+// 孕期子对话需要城市以推荐医院/查询当地政策；进入时若无城市则尝试浏览器定位并保存
+async function ensureSubLocation() {
+  if (current.type !== 'sub' || scenarioOf(current.subSessionId) !== 'pregnancy') {
+    setLocBanner('', false); return;
+  }
+  let collected = {};
+  try { collected = await (await fetch(`/api/sub-sessions/${current.subSessionId}/collected`)).json(); } catch (e) {}
+  if (collected.city) {
+    setLocBanner(`📍 当前地区：<b>${escapeHtml(collected.city)}</b>
+      <button class="complete-btn" style="margin-left:auto;" onclick="relocateSub()">重新定位</button>`, true);
+    return;
+  }
+  setLocBanner(`📍 未设置所在城市，授权定位后可推荐附近产检医院、查询当地补贴政策
+    <button class="complete-btn" style="margin-left:auto;" onclick="relocateSub()">📍 定位</button>`, true);
+  try {
+    const label = await primeLocation();
+    if (label) {
+      await fetch(`/api/sub-sessions/${current.subSessionId}/collected`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ city: label.label, latitude: label.latitude, longitude: label.longitude })
+      });
+    }
+    if (!label) throw new Error('no-location');
+    await Promise.all([loadHistory(), loadTasks()]);
+    setLocBanner(`📍 当前地区：<b>${escapeHtml(label.label)}</b>
+      <button class="complete-btn" style="margin-left:auto;" onclick="relocateSub()">重新定位</button>`, true);
+  } catch (e) { /* 用户未授权或定位失败，保留手动定位按钮 */ }
+}
+
+async function relocateSub() {
+  setLocBanner('📍 正在定位...', true);
+  try {
+    const label = await locateCity(10000);
+    _myLocation = label;
+    try { await fetch(`/api/users/location`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ city: label.label, latitude: label.latitude, longitude: label.longitude }) }); } catch(e) {}
+    await fetch(`/api/sub-sessions/${current.subSessionId}/collected`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ city: label.label, latitude: label.latitude, longitude: label.longitude })
+    });
+    await Promise.all([loadHistory(), loadTasks()]);
+    setLocBanner(`📍 当前地区：<b>${escapeHtml(label.label)}</b>
+      <button class="complete-btn" style="margin-left:auto;" onclick="relocateSub()">重新定位</button>`, true);
+  } catch (e) {
+    setLocBanner(`📍 定位失败，可在创建信息中手动填写城市
+      <button class="complete-btn" style="margin-left:auto;" onclick="relocateSub()">重试定位</button>`, true);
+  }
+}
+
+// 孕期对话框头部展示实时孕周：基于预产期（40周+0）反推
+async function updatePregnancyHeader(subId) {
+  if (current.type !== 'sub' || scenarioOf(subId) !== 'pregnancy') return;
+  let collected = {};
+  try { collected = await (await fetch(`/api/sub-sessions/${subId}/collected`)).json(); } catch (e) {}
+  const due = collected.dueDate;
+  if (!due) { document.getElementById('chatTag').textContent = '专属子对话'; return; }
+  const dueDate = new Date(due + 'T00:00:00');
+  if (isNaN(dueDate)) return;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const daysToDue = Math.round((dueDate - today) / 86400000);
+  let daysPregnant = 280 - daysToDue;
+  if (daysPregnant < 0) daysPregnant = 0;
+  const weeks = Math.floor(daysPregnant / 7);
+  const days = daysPregnant % 7;
+  const txt = `孕期 ${weeks}周${days > 0 ? '+' + days + '天' : ''} · 预产期 ${due}`;
+  document.getElementById('chatTag').textContent = txt;
+}
+
+// 子对话顶部展示学习资料链接（报名入口、教材、大纲、查分入口等）
+async function loadMaterials(subId) {
+  const bar = document.getElementById('materialsBar');
+  if (current.type !== 'sub' || !subId) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  let items = [];
+  try { items = await (await fetch(`/api/sub-sessions/${subId}/materials`)).json(); } catch (e) {}
+  if (!items || !items.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  bar.innerHTML = '<span style="color:#8a909b;font-weight:600;">📚 资料：</span>' + items.map(m => {
+    const t = escapeHtml(m.title || '链接'); const u = escapeHtml(m.url || '#');
+    return `<a href="${u}" target="_blank" rel="noopener" style="color:#3b6ef5;text-decoration:none;background:#fff;border:1px solid #d6e0ff;border-radius:12px;padding:3px 10px;">${t} ↗</a>`;
+  }).join('');
+  bar.style.display = 'flex';
+}
+
+// ===== 差异同步：每个可更新点一个版本游标，轮询只拉变化的部分 =====
+const syncVer = { msgId: 0, sessions: null, tasks: null, sub: null, pending: null };
+let syncTimer = null;
+let messagesHasMore = false;
+
+function resetSyncCursors() {
+  syncVer.msgId = 0; syncVer.sessions = null; syncVer.tasks = null;
+  syncVer.sub = null; syncVer.pending = null; messagesHasMore = false;
+}
+
+function renderMessage(m) {
+  return addBubble(m.role, m.content, m.reasoning);
+}
+
+async function initialSync() {
+  resetSyncCursors();
+  const res = await fetch(buildSyncUrl({}));
+  const data = await res.json();
+  applySync(data, true);
+}
+
+function buildSyncUrl(opts) {
+  const p = new URLSearchParams();
+  p.set('sessionType', current.type);
+  if (current.subSessionId) p.set('subSessionId', current.subSessionId);
+  if (opts.afterMsgId) p.set('afterMsgId', opts.afterMsgId);
+  if (opts.sessionsAt) p.set('sessionsAt', opts.sessionsAt);
+  if (opts.tasksAt) p.set('tasksAt', opts.tasksAt);
+  if (opts.subAt) p.set('subAt', opts.subAt);
+  if (opts.pendingAt) p.set('pendingAt', opts.pendingAt);
+  return '/api/sync?' + p.toString();
+}
+
+function applySync(data, isInitial) {
+  const el = document.getElementById('messages');
+  // 消息
+  const mb = data.messages;
+  if (mb && mb.changed) {
+    if (isInitial) {
+      el.innerHTML = '';
+      (mb.messages || []).forEach(renderMessage);
+      messagesHasMore = !!mb.hasMore;
+      renderLoadOlderButton();
+    } else if (mb.messages && mb.messages.length) {
+      mb.messages.forEach(m => {
+        if (m.id && el.querySelector(`.msg[data-msg-id="${m.id}"]`)) return;
+        // 流式发送时已本地插入用户气泡和助手气泡，按内容去重避免重复
+        const sameContent = (m.role === 'assistant')
+          ? (d) => { const a = d.querySelector('.answer'); return (a ? a.textContent : d.textContent || '').trim() === (m.content || '').trim(); }
+          : (d) => (d.textContent || '').trim() === (m.content || '').trim();
+        const exists = [...el.querySelectorAll('.msg')].some(d =>
+          !d.dataset.msgId && d.classList.contains(m.role === 'user' ? 'user' : 'assistant') && sameContent(d));
+        if (exists) {
+          const node = [...el.querySelectorAll('.msg')].find(d =>
+            !d.dataset.msgId && d.classList.contains(m.role === 'user' ? 'user' : 'assistant') && sameContent(d));
+          if (m.id && node) node.dataset.msgId = m.id;
+          return;
+        }
+        renderMessage(m);
+      });
+    }
+    syncVer.msgId = mb.lastMsgId || syncVer.msgId;
+    messagesHasMore = mb.hasMore !== undefined ? !!mb.hasMore : messagesHasMore;
+    if (isInitial || mb.messages && mb.messages.length) renderLoadOlderButton();
+    el.scrollTop = el.scrollHeight;
+  }
+  // 左侧子对话列表
+  if (data.sessions && data.sessions.changed) {
+    renderSessions(data.sessions.items || []);
+    syncVer.sessions = data.sessions.at;
+  }
+  // 待办
+  if (data.tasks && data.tasks.changed) {
+    if (data.tasks.data) renderTasksData(data.tasks.data);
+    syncVer.tasks = data.tasks.at;
+  }
+  // 子对话信息（孕周/资料/state 等）
+  if (data.sub && data.sub.changed) {
+    applySubData(data.sub.data);
+    syncVer.sub = data.sub.at;
+  }
+  // 待确认卡片
+  if (data.pending && data.pending.changed) {
+    applyPending(data.pending.data);
+    syncVer.pending = data.pending.at;
+  }
+}
+
+function applySubData(d) {
+  if (!d) return;
+  if (current.type === 'sub' && current.subSessionId) {
+    updatePregnancyHeader(current.subSessionId);
+    loadMaterials(current.subSessionId);
+  }
+}
+
+function applyPending(d) {
+  const el = document.getElementById('messages');
+  // 主对话建目标确认卡
+  el.querySelectorAll('.msg-card.goal-card').forEach(c => {
+    if (!d || d.kind !== 'GOAL_PROPOSAL' || d.proposalId !== c.dataset.proposalId) c.remove();
+  });
+  if (d && d.kind === 'GOAL_PROPOSAL' && current.type === 'main') {
+    const p = d.payload || {}; p.proposalId = d.proposalId;
+    const existing = el.querySelector(`.msg-card.goal-card[data-proposal-id="${d.proposalId}"]`);
+    if (!existing) {
+      const card = buildGoalCard(p);
+      card.classList.add('msg-card');
+      card.dataset.proposalId = d.proposalId;
+      el.appendChild(card);
+      el.scrollTop = el.scrollHeight;
+    }
+  }
+  // 子对话变更确认弹窗
+  if (d && d.kind === 'CHANGE_PROPOSAL' && current.type === 'sub') {
+    const p = d.payload || {}; p.proposalId = d.proposalId;
+    if (!document.getElementById('proposalModalBg').style.display.includes('flex')) {
+      showProposal(p);
+    }
+  } else if (!d && current.type === 'sub') {
+    document.getElementById('proposalModalBg').style.display = 'none';
+  }
+}
+
+function renderLoadOlderButton() {
+  const el = document.getElementById('messages');
+  if (!el) return;
+  const old = el.querySelector('.load-older');
+  if (old) old.remove();
+  if (!messagesHasMore) return;
+  const firstId = el.querySelector('.msg')?.dataset?.msgId;
+  const btn = document.createElement('div');
+  btn.className = 'msg system load-older';
+  btn.style.cursor = 'pointer';
+  btn.textContent = '↑ 加载更早消息';
+  btn.onclick = () => loadOlder();
+  el.insertBefore(btn, el.firstChild);
+}
+
+async function loadOlder() {
+  if (!current.subSessionId && current.type !== 'main') return;
+  const el = document.getElementById('messages');
+  const firstMsg = [...el.querySelectorAll('.msg:not(.load-older)')].find(m => m.dataset.msgId);
+  const beforeId = firstMsg ? Number(firstMsg.dataset.msgId) : null;
+  const p = new URLSearchParams();
+  p.set('sessionType', current.type);
+  if (current.subSessionId) p.set('subSessionId', current.subSessionId);
+  if (beforeId) p.set('beforeId', beforeId);
+  const res = await fetch('/api/messages/older?' + p.toString());
+  const data = await res.json();
+  const oldScrollHeight = el.scrollHeight;
+  const stick = nearBottom();
+  const ref = el.querySelector('.load-older') || el.firstChild;
+  (data.messages || []).slice().reverse().forEach(m => {
+    const node = renderMessage(m);
+    el.insertBefore(node, ref);
+  });
+  messagesHasMore = !!data.hasMore;
+  renderLoadOlderButton();
+  if (!stick) el.scrollTop += el.scrollHeight - oldScrollHeight;
+}
+
+async function loadHistory() {
+  await initialSync();
+}
+
+async function tickSync() {
+  if (sending) return;
+  try {
+    const res = await fetch(buildSyncUrl({
+      afterMsgId: syncVer.msgId || undefined,
+      sessionsAt: syncVer.sessions || undefined,
+      tasksAt: syncVer.tasks || undefined,
+      subAt: syncVer.sub || undefined,
+      pendingAt: syncVer.pending || undefined,
+    }));
+    applySync(await res.json(), false);
+    loadPendingKnowledge();
+  } catch (e) {}
+}
+
+function startSyncTimer() {
+  if (syncTimer) clearInterval(syncTimer);
+  syncTimer = setInterval(tickSync, 5000);
+}
+
+let lastTasksResp = null;
+async function openFocusEditor() {
+  const sc = scenarios.find(s => s.type === currentScenarioType());
+  if (!sc) return;
+  // 当前生效关注项：以后端持久化的已启用集合为准（含无内置任务的关注项），再叠加强制项
+  const active = new Set();
+  try {
+    const st = await (await fetch(`/api/sub-sessions/${current.subSessionId}/state`)).json();
+    (st.focusAreas || []).forEach(k => active.add(k));
+  } catch (e) {}
+  sc.focusAreas.forEach(f => { if (f.mandatory) active.add(f.key); });
+  // 自定义关注项（对话动态创建、不在内置列表里）
+  let customLabels = {};
+  try { customLabels = await (await fetch(`/api/sub-sessions/${current.subSessionId}/custom-focus`)).json() || {}; } catch(e) {}
+  const builtinKeys = new Set(sc.focusAreas.map(f => f.key));
+  const customRows = Object.keys(customLabels)
+    .filter(k => active.has(k) || !builtinKeys.has(k))
+    .map(k => {
+      const checked = active.has(k) ? 'checked' : '';
+      return `<label class="focus-edit-row" style="background:#f5f8ff;border-radius:6px;"><input type="checkbox" data-editfocus="${k}" ${checked}><span class="focus-edit-text"><b>${escapeHtml(customLabels[k]||k)}</b> <span style="color:#3b6ef5;font-size:11px;">自定义</span></span></label>`;
+    }).join('');
+  const wrap = document.getElementById('focusEditorList');
+  wrap.innerHTML = customRows + sc.focusAreas.map(f => {
+    const lock = f.mandatory ? 'checked disabled' : (active.has(f.key) ? 'checked' : '');
+    const dep = (f.dependsOn&&f.dependsOn.length) ? ` <span style="color:#b8860b;font-size:11px;">(依赖${depText(sc, f.dependsOn)}，自动带上)</span>` : '';
+    return `<label class="focus-edit-row">
+      <input type="checkbox" data-editfocus="${f.key}" ${lock}>
+      <span class="focus-edit-text"><b>${f.label}${f.mandatory?' *':''}</b>${dep}</span></label>`;
+  }).join('');
+  document.getElementById('focusModalBg').style.display='flex';
+}
+async function saveFocusAreas() {
+  const focusAreas = Array.from(document.querySelectorAll('#focusEditorList input[data-editfocus]'))
+    .filter(i => i.checked || i.disabled).map(i => i.dataset.editfocus);
+  await fetch(`/api/sub-sessions/${current.subSessionId}/focus`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ focusAreas })
+  });
+  document.getElementById('focusModalBg').style.display='none';
+  loadTasks();
+}
+function scenarioOf(sid) {
+  return (window._subScenario || {})[sid] || 'pregnancy';
+}
+function currentScenarioType() {
+  return scenarioOf(current.subSessionId);
+}
+
+async function loadTasks() {
+  const el = document.getElementById('taskList');
+  if (!current.subSessionId) { el.innerHTML = ''; return; }
+  try {
+    const res = await fetch('/api/sub-sessions/' + current.subSessionId + '/tasks');
+    const data = await res.json();
+    renderTasksData(data);
+  } catch (e) { el.innerHTML = ''; }
+}
+
+function renderTasksData(data) {
+  const el = document.getElementById('taskList');
+  if (!el) return;
+  if (!current.subSessionId) { el.innerHTML = ''; return; }
+  try {
+    lastTasksResp = data;
+    const groups = data.groups || [];
+    if (!groups.length) {
+      el.innerHTML = '<div style="color:#aab; font-size:12px; padding:8px;">暂无待办</div>';
+      return;
+    }
+    let html = '';
+    let seenCustom = false, seenBuiltin = false;
+    groups.forEach(g => {
+      if (g.custom && !seenCustom) { seenCustom = true; html += '<div style="font-size:11px;color:#3b6ef5;font-weight:700;margin:10px 0 2px;letter-spacing:.5px;">我的关注项</div>'; }
+      if (!g.custom && !seenBuiltin) { seenBuiltin = true; html += '<div style="font-size:11px;color:#8a909b;font-weight:700;margin:10px 0 2px;letter-spacing:.5px;">内置关注项</div>'; }
+      const upcoming = g.upcomingCollapsed || [];
+      const history = g.history || [];
+      const upcomingOpen = taskCollapsedOpen(current.subSessionId, g.key, 'upcoming');
+      // 有过期任务时，历史待办默认展开（红色高亮不能被折叠藏起来）
+      const historyOpen = taskCollapsedOpen(current.subSessionId, g.key, 'history') || (history.length > 0);
+      const groupOpen = taskGroupOpen(current.subSessionId, g.key);
+      const countText = g.total > g.tasks.length
+        ? ` <span style="color:#bbb;">(共${g.total}，显示最近${g.tasks.length}项${g.overdueCount ? `，${g.overdueCount}项过期` : ''})</span>`
+        : (g.overdueCount ? ` <span style="color:#e5484d;font-weight:600;">(${g.overdueCount} 项已过期待确认)</span>` : '');
+      let body = '';
+      g.tasks.forEach(t => body += taskHtml(t));
+      if (upcoming.length) {
+        body += `<div style="font-size:12px;color:#8a909b;margin:4px 0;cursor:pointer;" onclick="toggleTaskSub('${current.subSessionId}','${g.key}','upcoming',this)">
+          <span class="arrow">${upcomingOpen ? '▼' : '▶'}</span> ${upcoming.length} 项后续待办（点击${upcomingOpen ? '收起' : '展开'}）</div>
+          <div class="hist-wrap" style="display:${upcomingOpen ? 'flex' : 'none'}; flex-direction:column; gap:6px; margin-bottom:8px;">`;
+        upcoming.forEach(t => body += taskHtml(t));
+        body += '</div>';
+      }
+      if (history.length) {
+        body += `<div style="font-size:12px;color:${history.length ? '#e5484d' : '#e8893a'};font-weight:${history.length ? '600' : '400'};margin:4px 0;cursor:pointer;" onclick="toggleTaskSub('${current.subSessionId}','${g.key}','history',this)">
+          <span class="arrow">${historyOpen ? '▼' : '▶'}</span> ${history.length} 项历史待办（已过期，需确认，点击${historyOpen ? '收起' : '展开'}）</div>
+          <div class="hist-wrap" style="display:${historyOpen ? 'flex' : 'none'}; flex-direction:column; gap:6px; margin-bottom:8px;">`;
+        history.forEach(t => body += taskHtml(t));
+        body += '</div>';
+      }
+      html += `<div style="margin:8px 0 4px;">
+        <div style="font-size:12px;color:#8a909b;cursor:pointer;display:flex;align-items:center;gap:4px;" onclick="toggleTaskGroup('${current.subSessionId}','${g.key}',this)">
+          <span class="grp-arrow">${groupOpen ? '▼' : '▶'}</span><span style="font-weight:600;">${escapeHtml(g.label)}</span>${countText}
+        </div>
+        <div class="grp-body" style="display:${groupOpen ? 'block' : 'none'};">${body}</div>
+      </div>`;
+    });
+    el.innerHTML = html;
+  } catch (e) { el.innerHTML = ''; }
+}
+
+function recurrenceTag(t) {
+  const map = { daily:'每天', weekly:'每周', biweekly:'每两周', monthly:'每月' };
+  const label = t.recurrence && map[t.recurrence];
+  if (!label) return '';
+  const time = t.remindTime ? ` ${t.remindTime}` : '';
+  return ` <span class="timed-tag">⏰ ${label}${time}</span>`;
+}
+
+function taskHtml(t) {
+  const overdue = !t.completed && (t.status === 'OVERDUE' || isOverdue(t));
+  const dueToday = !t.completed && !overdue && isDueToday(t);
+  const remindTriggered = !t.completed && !overdue && !dueToday && isRemindDue(t);
+  let cls = 'task-item';
+  if (t.completed) cls += ' done';
+  if (overdue) cls += ' overdue';
+  else if (dueToday || remindTriggered) cls += ' due-today';
+  if (t.recurrence) cls += ' timed';
+  if (t.reminded && !t.completed) cls += ' reminded';
+
+  let titleTag = '';
+  if (overdue) titleTag = '<span class="urgent-tag">已过期·待确认</span>';
+  else if (dueToday) titleTag = '<span class="urgent-tag">今日执行</span>';
+  else if (remindTriggered) titleTag = '<span class="urgent-tag" style="background:#e8893a;">提醒已触发</span>';
+
+  let meta = '';
+  if (t.recurrence) {
+    const map = { daily:'每天', weekly:'每周', biweekly:'每两周', monthly:'每月' };
+    const time = t.remindTime ? t.remindTime : '09:00';
+    meta += `<span class="badge-remind" style="font-weight:700;">⏰ ${map[t.recurrence]} ${time} 提醒</span>`;
+    if (overdue) meta += '<span style="color:#e5484d;font-weight:600;">已过期，请确认</span>';
+    else if (t.status === 'COMPLETED' || t.completed) meta += '<span style="color:#2e9e5b;">已完成</span>';
+    else if (remindTriggered || dueToday) meta += '<span style="color:#3b6ef5;font-weight:600;">今日已到点</span>';
+    else meta += `<span style="color:#888;">${recurringWhen(t)} ${time} 待提醒</span>`;
+  } else {
+    if (t.remindDate && t.dueDate && t.remindDate !== t.dueDate) {
+      meta += `<span class="badge-due">🔔 提醒 ${t.remindDate}</span><span class="badge-due">📅 执行 ${t.dueDate}</span>`;
+    } else if (t.dueDate) {
+      meta += `<span class="badge-due">📅 ${t.dueDate}</span>`;
+    }
+    if (overdue) meta += '<span style="color:#e5484d;font-weight:600;">⏰ 已过执行时间，请确认</span>';
+    else if (t.status === 'COMPLETED' || t.completed) meta += '<span style="color:#2e9e5b;">已完成</span>';
+    else if (dueToday) meta += '<span style="color:#e8893a;font-weight:600;">到执行日了</span>';
+    else if (remindTriggered) meta += '<span style="color:#e8893a;font-weight:600;">已到提醒时间，请关注</span>';
+    else meta += '<span style="color:#3b6ef5;">待办</span>';
+  }
+  if (t.reminded && !t.completed && !t.recurrence) meta += '<span class="badge-remind" style="font-weight:600;">🔔已提醒</span>';
+  const completeBtn = t.completed ? '' : `<button class="complete-btn" onclick="completeTask(${t.id})">标记完成</button>`;
+  const delBtn = `<button class="del-btn" onclick="deleteTask(${t.id})" title="删除">✕</button>`;
+  const btn = `<div style="display:flex;gap:6px;align-items:center;flex:none;">${completeBtn}${delBtn}</div>`;
+  const detail = t.detail ? `<div class="meta" style="color:#6b7280;white-space:pre-wrap;margin-top:2px;">${escapeHtml(t.detail)}</div>` : '';
+  return `<div class="${cls}" style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
+    <div style="flex:1;"><div>${escapeHtml(t.content)}${titleTag}</div><div class="meta">${meta}</div>${detail}</div>
+    ${btn}
+  </div>`;
+}
+
+function isOverdue(t) {
+  if (!t.dueDate || t.completed) return false;
+  const due = new Date(t.dueDate + 'T00:00:00');
+  const today = new Date(new Date().toDateString());
+  return due < today;
+}
+
+function isDueToday(t) {
+  if (!t.dueDate || t.completed) return false;
+  const due = new Date(t.dueDate + 'T00:00:00');
+  const today = new Date(new Date().toDateString());
+  if (due.getTime() !== today.getTime()) return false;
+  // 带具体时刻的周期任务：未到时刻不算“到点”，避免晚上的任务白天就提示已到点。
+  if (t.recurrence && t.remindAt) {
+    const at = new Date(t.remindAt);
+    if (!isNaN(at)) return Date.now() >= at.getTime();
+  }
+  return true;
+}
+
+function recurringWhen(t) {
+  if (!t.dueDate) return '';
+  const due = new Date(t.dueDate + 'T00:00:00');
+  if (isNaN(due)) return '';
+  const today = new Date(new Date().toDateString());
+  const diff = Math.round((due - today) / 86400000);
+  if (diff === 0) return '今日';
+  if (diff === 1) return '明日';
+  if (diff === -1) return '昨日';
+  const mm = String(due.getMonth() + 1).padStart(2, '0');
+  const dd = String(due.getDate()).padStart(2, '0');
+  return `${mm}-${dd}`;
+}
+
+function isRemindDue(t) {
+  if (!t.remindDate || t.completed) return false;
+  // 有具体提醒时刻（如每天20:00）时，必须到点才算触发；仅日期时按日期判断。
+  if (t.remindAt) {
+    const at = new Date(t.remindAt);
+    if (!isNaN(at)) return Date.now() >= at.getTime();
+  }
+  const r = new Date(t.remindDate + 'T00:00:00');
+  const today = new Date(new Date().toDateString());
+  return r <= today;
+}
+
+function taskCollapsedOpen(subId, key, kind) {
+  return localStorage.getItem(`task-collapse:${subId}:${key}:${kind}`) === '1';
+}
+function taskGroupOpen(subId, key) {
+  return localStorage.getItem(`task-group:${subId}:${key}`) !== '0';
+}
+function toggleTaskGroup(subId, key, el) {
+  const body = el.nextElementSibling;
+  const open = body.style.display === 'none';
+  body.style.display = open ? 'block' : 'none';
+  el.querySelector('.grp-arrow').textContent = open ? '▼' : '▶';
+  localStorage.setItem(`task-group:${subId}:${key}`, open ? '1' : '0');
+}
+function toggleTaskSub(subId, key, kind, el) {
+  const wrap = el.nextElementSibling;
+  const open = wrap.style.display === 'none';
+  wrap.style.display = open ? 'flex' : 'none';
+  el.querySelector('.arrow').textContent = open ? '▼' : '▶';
+  localStorage.setItem(`task-collapse:${subId}:${key}:${kind}`, open ? '1' : '0');
+  const count = wrap.children.length;
+  const suffix = kind === 'history' ? '历史待办（已过期，需确认）' : '后续待办';
+  el.innerHTML = `<span class="arrow">${open ? '▼' : '▶'}</span> ${count} 项${suffix}（点击${open ? '收起' : '展开'}）`;
+}
+
+async function completeTask(id) {
+  await fetch('/api/tasks/' + id + '/complete', { method: 'POST' });
+  loadTasks();
+}
+
+async function deleteTask(id) {
+  if (!confirm('确定删除这条待办？')) return;
+  const r = await fetch('/api/tasks/' + id, { method: 'DELETE' });
+  if (!r.ok) { alert('删除失败'); return; }
+  loadTasks();
+}
+
+
+// ===== 语音输入（流式识别，经后端代理到火山单流 ASR）=====
+let VOICE = { recording:false, ctx:null, processor:null, stream:null, ws:null, baseText:'', finalText:'',
+  silenceFrames:0, voicedFrames:0, frameCount:0, maxFrames:0, noSpeechStop:false };
+
+// 语音活动检测参数（基于每帧音量的简易端点检测）
+const VOICE_RMS_THRESHOLD = 0.012;
+const VOICE_SILENCE_FRAMES = 18;
+const VOICE_MIN_VOICED_FRAMES = 3;
+const VOICE_MAX_SECONDS = 60;
+const VOICE_NOSPEECH_SECONDS = 6;
+
+function setVoiceStatus(msg, isError) {
+  const el = document.getElementById('voiceStatus');
+  if (!el) return;
+  el.style.display = msg ? 'block' : 'none';
+  el.textContent = msg || '';
+  el.className = 'voice-status' + (isError ? ' error' : '');
+}
+
+async function toggleVoice() {
+  if (VOICE.recording) { stopVoice(); return; }
+  const btn = document.getElementById('micBtn');
+  try {
+    if (!navigator.mediaDevices || !window.WebSocket) { setVoiceStatus('当前浏览器不支持语音输入', true); return; }
+    VOICE.baseText = (document.getElementById('input').value || '').trimEnd();
+    VOICE.finalText = '';
+    VOICE.silenceFrames = 0; VOICE.voicedFrames = 0; VOICE.frameCount = 0;
+    VOICE.maxFrames = 0; VOICE.noSpeechStop = false;
+    const token = SESSION && SESSION.token;
+    if (!token) { setVoiceStatus('请先登录', true); return; }
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${proto}://${location.host}/ws/asr?token=${encodeURIComponent(token)}`);
+    ws.binaryType = 'arraybuffer';
+    VOICE.ws = ws;
+    setVoiceStatus('正在连接语音识别…');
+
+    ws.onmessage = (ev) => {
+      let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.type === 'ready') { setVoiceStatus('🎙 正在听…请说话'); }
+      else if (msg.type === 'result') {
+        const t = (msg.text || '').trim();
+        if (t) { VOICE.finalText = t; refreshInputFromVoice(msg.final); }
+        if (msg.final) setVoiceStatus('✅ 识别完成');
+      } else if (msg.type === 'end') {
+        setVoiceStatus(VOICE.finalText ? '' : '未识别到内容', !VOICE.finalText);
+      } else if (msg.type === 'error') {
+        setVoiceStatus(msg.message || '识别出错', true);
+      }
+    };
+    ws.onerror = () => setVoiceStatus('语音连接失败', true);
+    ws.onclose = () => { if (VOICE.recording) stopVoice(); };
+
+    VOICE.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount:1, echoCancellation:true, noiseSuppression:true } });
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioCtx();
+    VOICE.ctx = ctx;
+    const source = ctx.createMediaStreamSource(VOICE.stream);
+    const processor = ctx.createScriptProcessor(4096, 1, 1);
+    VOICE.processor = processor;
+    processor.onaudioprocess = (e) => {
+      if (!VOICE.recording || ws.readyState !== 1) return;
+      const input = e.inputBuffer.getChannelData(0);
+      // 音量检测：自动判断说话结束
+      let sum = 0;
+      for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+      const rms = Math.sqrt(sum / input.length);
+      if (rms >= VOICE_RMS_THRESHOLD) { VOICE.voicedFrames++; VOICE.silenceFrames = 0; }
+      else if (VOICE.voicedFrames >= VOICE_MIN_VOICED_FRAMES) { VOICE.silenceFrames++; }
+      VOICE.frameCount++;
+      if (VOICE.maxFrames <= 0) VOICE.maxFrames = Math.ceil(VOICE_MAX_SECONDS * ctx.sampleRate / input.length);
+      const noSpeechFrames = Math.ceil(VOICE_NOSPEECH_SECONDS * ctx.sampleRate / input.length);
+      if (VOICE.voicedFrames >= VOICE_MIN_VOICED_FRAMES && VOICE.silenceFrames === 1) {
+        setVoiceStatus('🔇 已静音，正在识别…');
+      }
+      const spokeEnough = VOICE.voicedFrames >= VOICE_MIN_VOICED_FRAMES;
+      if ((spokeEnough && VOICE.silenceFrames >= VOICE_SILENCE_FRAMES)
+          || VOICE.frameCount >= VOICE.maxFrames
+          || (!spokeEnough && VOICE.frameCount >= noSpeechFrames)) {
+        if (!spokeEnough && VOICE.frameCount >= noSpeechFrames) VOICE.noSpeechStop = true;
+        stopVoice();
+        return;
+      }
+      const pcm = downsampleTo16k(input, ctx.sampleRate, 16000);
+      ws.send(pcm.buffer);
+    };
+    source.connect(processor);
+    // 接到 0 增益节点再到 destination，避免麦克风声音外放回授
+    const silence = ctx.createGain(); silence.gain.value = 0;
+    processor.connect(silence); silence.connect(ctx.destination);
+
+    VOICE.recording = true;
+    btn.classList.add('recording');
+    btn.textContent = '■';
+    setVoiceStatus('🎙 正在听…请说话');
+  } catch (err) {
+    setVoiceStatus('无法访问麦克风：' + (err && err.message ? err.message : err), true);
+    stopVoice();
+  }
+}
+
+function refreshInputFromVoice() {
+  const input = document.getElementById('input');
+  const recognized = (VOICE.baseText ? VOICE.baseText + ' ' : '') + VOICE.finalText;
+  input.value = recognized;
+}
+
+function stopVoice() {
+  const noSpeech = VOICE.noSpeechStop;
+  VOICE.recording = false;
+  const btn = document.getElementById('micBtn');
+  btn.classList.remove('recording');
+  btn.textContent = '\u{1F3A4}';
+  if (noSpeech) {
+    setVoiceStatus('未检测到说话，已取消', true);
+    try { VOICE.ws && VOICE.ws.close(); } catch(e){}
+    VOICE.ws = null;
+  } else {
+    setVoiceStatus('正在识别…');
+    try { if (VOICE.ws && VOICE.ws.readyState === 1) VOICE.ws.send(JSON.stringify({ action:'stop' })); } catch(e){}
+    setTimeout(() => { try { VOICE.ws && VOICE.ws.close(); } catch(e){} VOICE.ws = null; }, 3000);
+  }
+  try { VOICE.processor && VOICE.processor.disconnect(); } catch(e){}
+  try { VOICE.stream && VOICE.stream.getTracks().forEach(t => t.stop()); } catch(e){}
+  try { VOICE.ctx && VOICE.ctx.close(); } catch(e){}
+  VOICE.processor = null; VOICE.stream = null; VOICE.ctx = null;
+}
+
+// 线性降采样 Float32(原采样率) -> Int16 PCM 16kHz mono
+function downsampleTo16k(float32, fromRate, toRate) {
+  if (fromRate === toRate) return float32ToInt16(float32);
+  const ratio = fromRate / toRate;
+  const newLen = Math.round(float32.length / ratio);
+  const out = new Float32Array(newLen);
+  let pos = 0;
+  for (let i = 0; i < newLen; i++) {
+    const idx = Math.floor(pos);
+    const frac = pos - idx;
+    const a = float32[idx] || 0;
+    const b = float32[idx + 1] || a;
+    out[i] = a + (b - a) * frac;
+    pos += ratio;
+  }
+  return float32ToInt16(out);
+}
+function float32ToInt16(input) {
+  const out = new Int16Array(input.length);
+  for (let i = 0; i < input.length; i++) {
+    let s = Math.max(-1, Math.min(1, input[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return out;
+}
+
+function escapeHtml(s) {
+  return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function buildReasoningBox(text, startCollapsed) {
+  const box = document.createElement('div');
+  box.className = 'reasoning-box' + (startCollapsed ? ' collapsed' : '');
+  box.innerHTML = '<div class="r-head"><span class="r-arrow">' + (startCollapsed ? '▶' : '▼') + '</span><span class="r-title">思考过程</span></div><div class="r-body"></div>';
+  box.querySelector('.r-body').textContent = text;
+  box.querySelector('.r-head').onclick = () => {
+    box.classList.toggle('collapsed');
+    box.querySelector('.r-arrow').textContent = box.classList.contains('collapsed') ? '▶' : '▼';
+  };
+  return box;
+}
+
+function buildGoalCard(p) {
+  const card = document.createElement('div');
+  card.className = 'goal-card';
+  card.dataset.proposalId = p.proposalId || '';
+  let html = `<div class="gc-title">📋 请确认「${escapeHtml(p.title||'目标')}」信息</div>`;
+  (p.sections||[]).forEach(s => {
+    html += `<div class="gc-sec"><b>${escapeHtml((s.icon||'')+' '+(s.title||''))}</b>`;
+    (s.rows||[]).forEach(r => {
+      const val = r.value || '（待确认）';
+      html += `<div class="gc-row">${escapeHtml(r.label?r.label+'：':'')}${escapeHtml(val)}`
+        + (r.uncertain ? '<span class="unc">待确认</span>' : '') + `</div>`;
+    });
+    html += `</div>`;
+  });
+  html += `<div class="gc-actions">`
+    + `<button class="gc-ok" onclick="confirmGoalProposal('${p.proposalId}', this)">确认创建</button>`
+    + `<button class="gc-edit" onclick="editGoalProposal(this)">需要修改</button>`
+    + `</div>`;
+  card.innerHTML = html;
+  return card;
+}
+
+function editGoalProposal(btn) {
+  const card = btn.closest('.goal-card');
+  if (card.querySelector('.gc-editbox')) return;
+  const box = document.createElement('div');
+  box.className = 'gc-editbox';
+  box.innerHTML =
+    '<div style="font-size:12px;color:#5a6270;margin:6px 0;">告诉我要改什么，比如：我考三级、考试时间改到11月21号、在杭州考试。我会重新核实后再给你确认。</div>'
+    + '<textarea class="gc-edittext" rows="2" placeholder="输入要修改的内容…" style="width:100%;box-sizing:border-box;border:1px solid #c7d6ff;border-radius:7px;padding:7px;font-size:13px;resize:vertical;"></textarea>'
+    + '<div style="margin-top:6px;display:flex;gap:8px;">'
+    + '<button class="gc-send" style="background:#3b6ef5;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;">提交修改</button>'
+    + '<button class="gc-cancel" style="background:#eef1f6;color:#3a4252;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;">取消</button>'
+    + '</div>';
+  card.appendChild(box);
+  const ta = box.querySelector('.gc-edittext');
+  ta.focus();
+  box.querySelector('.gc-cancel').onclick = () => box.remove();
+  box.querySelector('.gc-send').onclick = () => {
+    const v = ta.value.trim();
+    if (!v) { ta.focus(); return; }
+    document.getElementById('input').value = v;
+    document.getElementById('sendBtn').click();
+  };
+  ta.onkeydown = (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); box.querySelector('.gc-send').click(); }
+  };
+}
+
+async function confirmGoalProposal(proposalId, btn) {
+  btn.disabled = true; btn.textContent = '创建中…';
+  try {
+    const res = await fetch(`/api/goal-proposals/${encodeURIComponent(proposalId)}/confirm`, { method: 'POST' });
+    if (!res.ok) { btn.disabled=false; btn.textContent='确认创建'; alert('创建失败，请重试'); return; }
+    const obj = await res.json();
+    const name = (scenarios.find(s=>s.type===obj.scenarioType)||{}).displayName || obj.title || obj.scenarioType;
+    await loadSessions();
+    const card = btn.closest('.goal-card');
+    if (card) {
+      card.querySelectorAll('button').forEach(b=>b.disabled=true);
+      card.querySelector('.gc-actions').innerHTML = '<span style="color:#2b8a3e;font-size:13px;">✅ 已创建，正在进入…</span>';
+    }
+    setTimeout(() => selectSub(obj.subSessionId, name), 600);
+  } catch (e) {
+    btn.disabled=false; btn.textContent='确认创建'; alert('创建失败：'+e.message);
+  }
+}
+
+function addBubble(role, text, reasoning, msgId) {
+  const el = document.getElementById('messages');
+  const div = document.createElement('div');
+  if (role === 'system') { div.className = 'msg system'; }
+  else { div.className = 'msg ' + (role === 'user' ? 'user' : 'assistant'); }
+  if (msgId != null) div.dataset.msgId = msgId;
+  if (role === 'assistant' && reasoning && reasoning.trim()) {
+    div.textContent = '';
+    div.appendChild(buildReasoningBox(reasoning, true));
+    const ans = document.createElement('div');
+    ans.className = 'answer';
+    ans.textContent = text;
+    div.appendChild(ans);
+  } else {
+    div.textContent = text;
+  }
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+  return div;
+}
+
+async function deleteSub(id, ev) {
+  if (ev) ev.stopPropagation();
+  if (!confirm('确认永久删除该子对话？\n将一并删除：对话记录、待办任务、记忆绑定关系（不可恢复）。')) return;
+  await fetch('/api/sub-sessions/' + id, { method: 'DELETE' });
+  if (current.subSessionId === id) selectMain();
+  else loadSessions();
+}
+
+let pendingCreate = null;
+function openModal() {
+  pendingCreate = null;
+  document.getElementById('modalOkBtn').textContent = '创建';
+  document.getElementById('modalOkBtn').classList.remove('back');
+  ['fieldsWrap','focusWrap','goalText'].forEach(id => document.getElementById(id).style.display = '');
+  document.getElementById('confirmWrap').style.display = 'none';
+  document.getElementById('modalBg').classList.add('show');
+  renderFields();
+}
+function closeModal() {
+  document.getElementById('modalBg').classList.remove('show');
+  pendingCreate = null;
+}
+
+function onModalOk() {
+  if (pendingCreate) confirmCreate();
+  else reviewCreate();
+}
+
+function reviewCreate() {
+  const type = document.getElementById('goalType').value;
+  const sc = scenarios.find(s => s.type === type);
+  const collected = {};
+  let missing = null;
+  document.querySelectorAll('#fieldsWrap input, #fieldsWrap select, #fieldsWrap textarea').forEach(inp => {
+    const v = inp.value.trim();
+    collected[inp.dataset.key] = v;
+    if (inp.dataset.required==='true' && !v && !missing) missing = inp.placeholder || inp.previousElementSibling?.textContent;
+  });
+  if (window._createLocation && collected.city === window._createLocation.label) {
+    collected.latitude = window._createLocation.latitude;
+    collected.longitude = window._createLocation.longitude;
+  }
+  if (missing) { alert('请填写：' + missing); return; }
+  // 用户勾选的项；mandatory 项虽被 disabled（不计入 :checked），后端会自动补，这里也一并带上
+  const focusAreas = Array.from(document.querySelectorAll('#focusWrap input[data-focus]'))
+    .filter(i => i.checked || i.disabled).map(i => i.dataset.focus);
+  const goal = document.getElementById('goalText').value || (sc ? sc.displayName : type);
+
+  const focusLabels = (sc.focusAreas||[]).filter(f => focusAreas.includes(f.key)).map(f => f.label);
+  const fieldLines = sc.fields.filter(f => collected[f.key]).map(f => `<div><b>${f.label}：</b>${escapeHtml(collected[f.key])}</div>`);
+  const cw = document.getElementById('confirmWrap');
+  cw.innerHTML = '<div style="font-weight:600; margin-bottom:4px;">请确认创建信息</div>'
+    + fieldLines.join('')
+    + `<div style="margin-top:6px;"><b>重点关注：</b>${focusLabels.length ? escapeHtml(focusLabels.join('、')) : '默认项'}</div>`
+    + '<div style="color:#8a909b; margin-top:4px;">确认后将据此生成专属子对话与初始待办。</div>';
+  cw.style.display = 'flex';
+  ['fieldsWrap','focusWrap'].forEach(id => document.getElementById(id).style.display = 'none');
+  document.getElementById('goalText').style.display = 'none';
+  document.getElementById('modalOkBtn').textContent = '确认创建';
+  pendingCreate = { type, sc, collected, focusAreas, goal };
+}
+
+async function confirmCreate() {
+  const { type, sc, collected, focusAreas, goal } = pendingCreate;
+  document.getElementById('modalOkBtn').disabled = true;
+  try {
+    const res = await fetch('/api/goals', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ userId: USER_ID, scenarioType: type, title: sc.displayName, goal, collected, focusAreas })
+    });
+    const data = await res.json();
+    closeModal();
+    document.getElementById('goalText').value = '';
+    await loadSessions();
+    selectSub(data.subSessionId, sc.displayName);
+  } finally {
+    document.getElementById('modalOkBtn').disabled = false;
+  }
+}
+
+
+function proposalSection(title, icon, items) {
+  if (!items || !items.length) return '';
+  return `<div style="border:1px solid #e6e8ec;border-radius:8px;padding:10px 12px;">
+    <div style="font-weight:600;font-size:13px;margin-bottom:6px;">${icon} ${title}</div>
+    <div style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:#3a3f47;">${items.join('')}</div>
+  </div>`;
+}
+
+function showProposal(p) {
+  if (!p) return;
+  const subId = current.subSessionId;
+  const body = document.getElementById('proposalBody');
+  const sections = [];
+
+  const fields = (p.fields || []).map(f =>
+    `<div><span style="color:#8a909b;">${f.label}：</span>${f.oldValue ? `<span style="color:#b0b5bd;text-decoration:line-through;">${f.oldValue}</span> → ` : ''}<b>${f.newValue}</b></div>`);
+  sections.push(proposalSection('目标信息', '🎯', fields));
+
+  const fa = [];
+  (p.focusAdded || []).forEach(x => fa.push(`<div><span style="color:#1a9b5c;">＋ 新增关注：</span><b>${x}</b></div>`));
+  (p.focusRemoved || []).forEach(x => fa.push(`<div><span style="color:#b56800;">－ 关闭关注：</span><b>${x}</b></div>`));
+  sections.push(proposalSection('关注项', '⚙️', fa));
+
+  const mem = (p.memories || []).map(m => `<div>• ${m}</div>`);
+  sections.push(proposalSection('对话记忆', '🧠', mem));
+
+  const recMap = { daily:'每天', weekly:'每周', biweekly:'每两周', monthly:'每月' };
+  const taskKeyInfo = (t, oldTimePrefix) => {
+    const bits = [];
+    if (t.recurrence) bits.push(`⏰ ${recMap[t.recurrence]||t.recurrence}${t.remindTime ? ' '+t.remindTime : ''}`);
+    else if (t.dueDate) bits.push(`📅 ${t.dueDate}`);
+    return bits.length ? ` <span style="color:#3b6ef5;font-weight:600;">[${oldTimePrefix||''}${bits.join('，')}]</span>` : '';
+  };
+  const taskDetail = t => (t.detail && t.detail.trim())
+    ? `<div style="color:#8a909b;font-size:12px;margin:2px 0 0 16px;">${escapeHtml(t.detail)}</div>` : '';
+  const taskLine = (t, oldDue, oldRemindTime) => {
+    const old = oldDue ? `<span style="color:#b0b5bd;text-decoration:line-through;">${oldDue}</span> → ` : '';
+    const oldTime = oldRemindTime ? `<span style="color:#b0b5bd;text-decoration:line-through;">${oldRemindTime}</span> → ` : '';
+    return `<div>${t.title} ${old}<b>${t.dueDate || ''}</b>${taskKeyInfo(t, oldTime)}</div>${taskDetail(t)}`;
+  };
+  const tasks = [];
+  (p.tasksAdded || []).forEach(t => tasks.push(taskLine(t)));
+  (p.tasksUpdated || []).forEach(t => tasks.push(`<div><span style="color:#3b6ef5;">↻</span> ` + taskLine(t, t.oldDueDate, t.oldRemindTime).replace('<div>','').replace('</div>','') + `</div>`));
+  (p.tasksCompleted || []).forEach(t => tasks.push(`<div><span style="color:#8a909b;">✓</span> ${t}</div>`));
+  (p.tasksRemoved || []).forEach(t => tasks.push(`<div><span style="color:#b56800;">－</span> ${t}</div>`));
+  sections.push(proposalSection('待办变更', '📋', tasks));
+
+  // 新增关注项将要生成的待办（动态预演，确认后才创建）
+  const planned = [];
+  (p.tasksPlanned || []).forEach(t => planned.push(taskLine(t)));
+  if (planned.length) {
+    planned.unshift(`<div style="color:#8a909b;font-size:12px;">以下为将为新增关注项生成的待办：</div>`);
+  }
+  sections.push(proposalSection('待新建待办', '✨', planned));
+
+  body.innerHTML = sections.join('');
+  body.dataset.proposalId = p.proposalId;
+  body.dataset.subId = subId;
+  document.getElementById('proposalModalBg').style.display = 'flex';
+}
+
+async function applyProposal() {
+  const body = document.getElementById('proposalBody');
+  const id = body.dataset.proposalId;
+  const subId = body.dataset.subId || current.subSessionId;
+  document.getElementById('proposalModalBg').style.display = 'none';
+  if (!id) return;
+  try {
+    await fetch(`/api/sub-sessions/${subId}/proposals/${id}/apply`, { method: 'POST' });
+  } catch (e) {}
+  if (current.type === 'sub') { loadTasks(); updatePregnancyHeader(current.subSessionId); loadSessions(); loadMaterials(current.subSessionId); }
+}
+
+async function discardProposal() {
+  const body = document.getElementById('proposalBody');
+  const id = body.dataset.proposalId;
+  const subId = body.dataset.subId || current.subSessionId;
+  document.getElementById('proposalModalBg').style.display = 'none';
+  if (!id) return;
+  try { await fetch(`/api/sub-sessions/${subId}/proposals/${id}/discard`, { method: 'POST' }); } catch (e) {}
+}
+
+async function send() {
+  if (sending) return;
+  const input = document.getElementById('input');
+  const text = input.value.trim();
+  if (!text) return;
+  sending = true;
+  document.getElementById('sendBtn').disabled = true;
+  input.value = '';
+  addBubble('user', text);
+  const bubble = addBubble('assistant', '');
+  bubble.textContent = '';
+  // 思考框 + 正式回答分离
+  let reasoningBox = null;
+  let reasoningBody = null;
+  let reasoningAcc = '';
+  const answer = document.createElement('div');
+  answer.className = 'answer';
+  bubble.appendChild(answer);
+  const cursor = document.createElement('span'); cursor.className='cursor'; answer.appendChild(cursor);
+  const messages = document.getElementById('messages');
+  let acc = '';
+  const goalCards = [];
+  let firstChunk = true;
+
+  function ensureReasoning() {
+    if (reasoningBox) return;
+    reasoningBox = document.createElement('div');
+    reasoningBox.className = 'reasoning-box';
+    reasoningBox.innerHTML = '<div class="r-head"><span class="r-arrow">▼</span><span class="r-title">思考过程</span></div><div class="r-body"></div>';
+    reasoningBody = reasoningBox.querySelector('.r-body');
+    reasoningBox.querySelector('.r-head').onclick = () => {
+      reasoningBox.classList.toggle('collapsed');
+      reasoningBox.querySelector('.r-arrow').textContent = reasoningBox.classList.contains('collapsed') ? '▶' : '▼';
+    };
+    bubble.insertBefore(reasoningBox, answer);
+  }
+  function collapseReasoning() {
+    if (reasoningBox && !reasoningBox.classList.contains('collapsed')) {
+      reasoningBox.classList.add('collapsed');
+      reasoningBox.querySelector('.r-arrow').textContent = '▶';
+    }
+  }
+
+  try {
+    const res = await fetch('/api/chat/stream', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ userId: USER_ID, sessionType: current.type, subSessionId: current.subSessionId, message: text })
+    });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '', event = 'message';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split('\n\n');
+      buffer = blocks.pop();
+      for (const block of blocks) {
+        let dataLines = [];
+        for (const line of block.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim();
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+        }
+        const data = dataLines.join('\n');
+        if (event === 'reasoning') {
+          ensureReasoning();
+          if (reasoningAcc) reasoningAcc += '\n'; reasoningAcc += data;
+          reasoningBody.textContent = reasoningAcc;
+        } else if (event === 'chunk') {
+          if (firstChunk) { collapseReasoning(); firstChunk = false; }
+          acc += data;
+          answer.textContent = acc;
+          answer.appendChild(cursor);
+        } else if (event === 'goal_created') {
+          try {
+            const obj = JSON.parse(data);
+            const name = (scenarios.find(s=>s.type===obj.scenarioType)||{}).displayName || obj.scenarioType;
+            await loadSessions();
+            const tip = document.createElement('div');
+            tip.className = 'msg system';
+            tip.innerHTML = `✨ 已为你创建「${name}」专属计划，正在为你进入...`;
+            messages.appendChild(tip);
+            messages.scrollTop = messages.scrollHeight;
+            setTimeout(() => selectSub(obj.subSessionId, name), 800);
+          } catch(e) {}
+        } else if (event === 'change_proposal') {
+          try { pendingProposal = JSON.parse(data); } catch(e) { pendingProposal = null; }
+        } else if (event === 'goal_proposal') {
+          try {
+            const p = JSON.parse(data);
+            const card = buildGoalCard(p);
+            goalCards.push(card);
+            card.classList.add('msg-card');
+            messages.appendChild(card);
+            messages.scrollTop = messages.scrollHeight;
+          } catch(e) {}
+        } else if (event === 'error') {
+          answer.textContent = '出错了：' + data;
+        }
+        event = 'message';
+        messages.scrollTop = messages.scrollHeight;
+      }
+    }
+    answer.textContent = acc;
+    if (pendingProposal && current.type === 'sub') {
+      showProposal(pendingProposal);
+      pendingProposal = null;
+    }
+    if (current.type === 'sub') { loadTasks(); updatePregnancyHeader(current.subSessionId); loadMaterials(current.subSessionId); }
+    loadPendingKnowledge();
+  } catch (e) {
+    answer.textContent = '请求失败：' + e.message;
+  } finally {
+    cursor.remove();
+    sending = false;
+    document.getElementById('sendBtn').disabled = false;
+    input.focus();
+    tickSync();
+  }
+}
+
+function nearBottom() {
+  const el = document.getElementById('messages');
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+}
+
+startSyncTimer();
+
+
+// ===== 待确认知识（联网检索结果沉淀）=====
+let knowPanelForced = false;
+async function loadPendingKnowledge() {
+  try {
+    const sid = current.subSessionId ? `?subSessionId=${current.subSessionId}` : '';
+    const res = await fetch(`/api/knowledge/pending${sid}`);
+    const items = await res.json();
+    const badge = document.getElementById('knowBadge');
+    const cnt = document.getElementById('knowBadgeCount');
+    cnt.textContent = items.length;
+    badge.style.display = items.length ? 'inline-block' : 'none';
+    const box = document.getElementById('knowledgePending');
+    if (!box) return;
+    if (!items.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.style.display = 'block';
+    box.innerHTML = `
+      <div style="font-size:13px;font-weight:600;margin-bottom:6px;color:#b56800;">🧠 待确认知识（联网检索结果）</div>
+      ${items.map(it => `
+        <div style="border:1px solid #ffe2b8;background:#fffaf2;border-radius:8px;padding:8px;margin-bottom:6px;font-size:12px;">
+          <div style="font-weight:600;margin-bottom:2px;">${escapeHtml(it.title||'未命名')}</div>
+          <div style="color:#555;line-height:1.4;max-height:42px;overflow:hidden;">${escapeHtml((it.content||'').slice(0,160))}</div>
+          ${it.sourceUrl ? `<a href="${it.sourceUrl}" target="_blank" style="color:#3b6ef5;font-size:11px;word-break:break-all;">${escapeHtml(it.sourceUrl)}</a>` : ''}
+          <div style="display:flex;gap:6px;margin-top:6px;">
+            <button onclick="confirmKnowledge(${it.id})" style="flex:1;background:#3b6ef5;color:#fff;border:none;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px;">保存到知识库</button>
+            <button onclick="rejectKnowledge(${it.id})" style="flex:1;background:#eee;border:none;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px;">忽略</button>
+          </div>
+        </div>`).join('')}
+    `;
+  } catch (e) {}
+}
+function toggleKnowledgePanel() {
+  const panel = document.getElementById('tasksPanel');
+  if (current.type !== 'sub') { panel.classList.add('show'); }
+  panel.classList.add('show');
+  const box = document.getElementById('knowledgePending');
+  if (box) { box.style.display = box.style.display === 'none' ? 'block' : 'block'; box.scrollIntoView({behavior:'smooth', block:'center'}); }
+}
+async function confirmKnowledge(id) {
+  await fetch(`/api/knowledge/${id}/confirm`, { method: 'POST' });
+  loadPendingKnowledge();
+}
+async function rejectKnowledge(id) {
+  await fetch(`/api/knowledge/${id}/reject`, { method: 'POST' });
+  loadPendingKnowledge();
+}
+function escapeHtml(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+renderAccount();
+bootstrap();
+
+</script>
+</body>
+</html>
