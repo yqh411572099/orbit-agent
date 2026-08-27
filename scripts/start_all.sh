@@ -48,7 +48,7 @@ end runInWindow
 
 runInWindow("$SCRIPT_DIR/run_milvus_lite.sh", "milvus-lite", "milvus/lite_server.py")
 delay 1
-runInWindow("$SCRIPT_DIR/run_butler.sh", "butler", "butler-0.0.1-SNAPSHOT.jar")
+runInWindow("$SCRIPT_DIR/run_butler.sh", "butler", "butler-.*[.]jar")
 APPLESCRIPT
 
 echo "Starting services in fixed windows, waiting..."

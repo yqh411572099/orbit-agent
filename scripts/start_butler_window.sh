@@ -3,9 +3,9 @@
 TERM_SCRIPT="/Users/ma0000/project/butler/scripts/butler_in_term.sh"
 
 # 1) 从外部停止旧进程，让前台运行 java 的标签回到 shell 提示符
-pkill -9 -f "butler-0.0.1-SNAPSHOT.jar" 2>/dev/null
+pkill -9 -f "butler-.*[.]jar" 2>/dev/null
 for i in $(seq 1 10); do
-  pgrep -f "butler-0.0.1-SNAPSHOT.jar" >/dev/null || break
+  pgrep -f "butler-.*[.]jar" >/dev/null || break
   sleep 0.5
 done
 

@@ -5,4 +5,4 @@ export PATH="$JAVA_HOME/bin:/usr/local/bin:$PATH"
 [ -f "$HOME/.butler.env" ] && source "$HOME/.butler.env"
 printf '\033]0;butler\007'
 cd /Users/ma0000/project/butler
-java -jar target/butler-0.0.1-SNAPSHOT.jar 2>&1 | tee /tmp/butler.log
+java -jar "$(ls -t target/butler-*.jar | head -1)" 2>&1 | tee /tmp/butler.log

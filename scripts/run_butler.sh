@@ -14,7 +14,7 @@ if [ -n "$EXISTING" ]; then
 fi
 
 # 2. 兜底清理残留 jar 进程
-pkill -9 -f "butler-0.0.1-SNAPSHOT.jar" 2>/dev/null
+pkill -9 -f "butler-.*[.]jar" 2>/dev/null
 sleep 1
 
 # 3. 环境变量（API Key 等密钥放在 ~/.butler.env，不要提交到仓库）
@@ -33,4 +33,4 @@ for i in $(seq 1 30); do
 done
 
 echo "启动 Butler：http://localhost:$PORT/"
-exec java -jar target/butler-0.0.1-SNAPSHOT.jar
+exec java -jar "$(ls -t target/butler-*.jar | head -1)"
