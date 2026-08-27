@@ -36,3 +36,10 @@
 - 沙箱内无法直接 `curl localhost`，启动/验证需要提权在独立 Terminal/进程执行。
 - `python3`/`git` 可能打印 xcrun_db cache 警告，忽略即可（看实际输出/退出码）。
    - **只跑与本次改动直接相关的脚本，不要每次全量回归**（脚本会越来越多、越跑越慢）。只有改动了多场景共用的核心抽象（记忆/上下文组装/时间轴同步/会话路由）时，才扩大到 `verify.sh` 做一次冒烟。
+
+## 版本发布与仓库规则
+- 两个远程仓库：`origin` = 私有 `yqh411572099/AI-Butler`，`orbit` = 公开 `yqh411572099/orbit-agent`。推送用 SSH 密钥 `~/.ssh/id_ed25519_github`（`GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_github -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"`），沙箱内 git/ssh-agent 不可用，需提权。
+- **正式版本（release，打 tag）**：同时推到 `origin`（AI-Butler）和 `orbit`（公开 orbit-agent），tag 两边都推。推公开仓库前必须确认无密钥泄露（所有 key 走环境变量，`.env`/`data/`/日志/`target/` 已在 .gitignore）。
+- **快照/日常提交（snapshot）**：只推 `origin`（AI-Butler），不推 `orbit`。
+- **打完正式包立即回快照**：发布正式版本（pom 为 `X.Y.Z`）并打好 tag 后，立刻把 `pom.xml` 版本改成下一个 `X.Y.(Z+1)-SNAPSHOT` 并提交，避免主干长期停留在 release 版本。
+- jar 名随版本变化，启动脚本用 `target/butler-*.jar` 动态解析，不要在脚本里写死版本号。
