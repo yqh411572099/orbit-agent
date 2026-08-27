@@ -48,6 +48,7 @@ public class ConversationAppService {
     private final ScenarioRegistry scenarioRegistry;
     private final ObjectMapper objectMapper;
     private final PendingProposalStore pendingProposalStore;
+    private final MetricAppService metricAppService;
 
     public ConversationAppService(RawChatLogRepository rawChatLogRepository,
                                   SubSessionRepository subSessionRepository,
@@ -58,7 +59,8 @@ public class ConversationAppService {
                                   MemorySessionRelRepository relRepository,
                                   ScenarioRegistry scenarioRegistry,
                                   ObjectMapper objectMapper,
-                                  PendingProposalStore pendingProposalStore) {
+                                  PendingProposalStore pendingProposalStore,
+                                  MetricAppService metricAppService) {
         this.rawChatLogRepository = rawChatLogRepository;
         this.subSessionRepository = subSessionRepository;
         this.taskRepository = taskRepository;
@@ -69,6 +71,7 @@ public class ConversationAppService {
         this.scenarioRegistry = scenarioRegistry;
         this.objectMapper = objectMapper;
         this.pendingProposalStore = pendingProposalStore;
+        this.metricAppService = metricAppService;
     }
 
     /** 独立事务保存一条聊天记录，即使后续业务处理异常也不回滚。 */
@@ -183,14 +186,18 @@ public class ConversationAppService {
         ScenarioDomain domain = scenarioRegistry.get(sub.getScenarioType());
         Map<String, String> existingCustomLabels = CustomFocusLabels.read(sub);
         ScenarioStateSupport.ScenarioState state = ScenarioStateSupport.parse(domain, sub.getCollectedInfo(), existingCustomLabels);
+        java.util.concurrent.atomic.AtomicReference<LlmPort.ScenarioEvent> llmEventHolder =
+                new java.util.concurrent.atomic.AtomicReference<>();
         List<ScenarioDomain.ScenarioIntent> intents = domain.interpret(
                 newMessage, state.collected(), state.focusAreas(),
                 (hints, message) -> {
-                    LlmPort.ScenarioEvent event = extractEvent(domain, state, existingCustomLabels, message);
-                    return new ScenarioDomain.DomainEvent(event.fieldUpdates(), event.completedKeywords(),
-                            event.enableFocusAreas(), event.disableFocusAreas(), event.note(), event.affectsTasks());
+                    LlmPort.ScenarioEvent ev = extractEvent(domain, state, existingCustomLabels, message);
+                    llmEventHolder.set(ev);
+                    return new ScenarioDomain.DomainEvent(ev.fieldUpdates(), ev.completedKeywords(),
+                            ev.enableFocusAreas(), ev.disableFocusAreas(), ev.note(), ev.affectsTasks());
                 });
         ScenarioDomain.ScenarioIntent event = aggregateIntents(intents);
+        LlmPort.ScenarioEvent llmEvent = llmEventHolder.get();
 
         LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"));
         Map<String, String> updates = domain.normalizeUpdates(newMessage,
@@ -315,11 +322,17 @@ public class ConversationAppService {
                 collected, effectiveFocus,
                 customLabels,
                 event.memoryUpserts() == null ? List.of() : event.memoryUpserts(), completed,
-                plannedDynamic);
+                plannedDynamic,
+                llmEvent == null || llmEvent.metricDefs() == null ? List.of() : llmEvent.metricDefs(),
+                llmEvent == null || llmEvent.metricPoints() == null ? List.of() : llmEvent.metricPoints());
 
+        List<String> metricCards = llmEvent == null || llmEvent.metricDefs() == null ? List.of()
+                : llmEvent.metricDefs().stream().map(d -> d.label() + "（" + (d.unit() == null ? "" : d.unit()) + "·" + d.chartType() + "图）").toList();
+        List<String> metricPoints = llmEvent == null || llmEvent.metricPoints() == null ? List.of()
+                : llmEvent.metricPoints().stream().map(d -> d.value() + (d.date() == null || d.date().isBlank() ? "" : "(" + d.date() + ")")).toList();
         ChangePreview preview = new ChangePreview(stored.id(), fieldChanges, focusAdded, focusRemoved,
                 tasksAdded, tasksUpdated, tasksRemoved, tasksCompleted, tasksPlanned,
-                memories, event.note());
+                memories, event.note(), metricCards, metricPoints);
         try {
             pendingProposalStore.attachPreview(stored.id(), objectMapper.writeValueAsString(preview));
         } catch (Exception ignored) {}
@@ -366,6 +379,7 @@ public class ConversationAppService {
         }
 
         upsertMemoryAttributes(sub, p.memoryUpserts());
+        applyMetrics(sub, p);
         if (!p.completedKeywords().isEmpty()) markCompletedByKeywords(sub.getId(), p.completedKeywords());
 
         // 动态任务以预览时模型给出的 plannedDynamicTasks 为准；预览判定无任务变更时不在确认时再次调模型，
@@ -583,6 +597,20 @@ public class ConversationAppService {
         }
     }
 
+    /** 确认变更后：合并指标卡定义并写入本次汇报的数据点（如“今日体重 78.5kg”）。 */
+    private void applyMetrics(SubSession sub, PendingProposalStore.StoredProposal p) {
+        try {
+            if (p.metricDefs() != null && !p.metricDefs().isEmpty()) {
+                metricAppService.mergeDefs(sub.getId(), p.metricDefs());
+            }
+            if (p.metricPoints() != null && !p.metricPoints().isEmpty()) {
+                metricAppService.addPoints(sub.getId(), sub.getUserId(), p.metricPoints());
+            }
+        } catch (Exception e) {
+            log.warn("应用指标卡数据失败 sub={} err={}", sub.getId(), e.getMessage());
+        }
+    }
+
     private Attribute mergeAttribute(Attribute existing, Attribute patch) {
         Map<String, Object> base = objectMapper.convertValue(existing, new TypeReference<>() {});
         Map<String, Object> updates = objectMapper.convertValue(patch, new TypeReference<>() {});
@@ -625,7 +653,9 @@ public class ConversationAppService {
                         t.getDueDate() == null ? "" : t.getDueDate().toString(),
                         t.getFocusArea() == null ? "" : t.getFocusArea(),
                         t.getDetail() == null ? "" : t.getDetail(),
-                        t.getRecurrence() == null ? "" : t.getRecurrence()))
+                        t.getRecurrence() == null ? "" : t.getRecurrence(),
+                        t.getRemindTime() == null ? "" : t.getRemindTime().toString(),
+                        t.getAiBrief() == null ? "" : t.getAiBrief()))
                 .toList();
         String collected = sub.getCollectedInfo() == null ? "" : sub.getCollectedInfo();
         String focusContext = buildFocusContext(domain, effectiveFocus);
@@ -650,9 +680,10 @@ public class ConversationAppService {
             LocalDate due = Task.parseDueDate(item.dueDate());
             String recurrence = item.recurrence() == null ? "" : item.recurrence().trim();
             java.time.LocalTime remindTime = Task.parseRemindTime(item.remindTime());
-            taskRepository.save(Task.createScheduled(subSessionId, item.content(), item.detail(),
-                    null, null, item.focusArea(), due, due, null,
-                    recurrence.isBlank() ? null : recurrence, remindTime));
+            taskRepository.save(Task.createDynamic(subSessionId, item.content(),
+                    item.detail() == null ? "" : item.detail(), item.focusArea(), due,
+                    recurrence.isBlank() ? null : recurrence, remindTime,
+                    item.aiBrief() == null ? "" : item.aiBrief().trim()));
         }
     }
 

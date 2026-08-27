@@ -3,6 +3,7 @@ package com.butler.application;
 import com.butler.domain.model.SubSession;
 import com.butler.domain.model.SubSessionStatus;
 import com.butler.domain.repository.MemorySessionRelRepository;
+import com.butler.domain.repository.MetricPointRepository;
 import com.butler.domain.repository.RawChatLogRepository;
 import com.butler.domain.repository.SubSessionRepository;
 import com.butler.domain.repository.TaskRepository;
@@ -25,19 +26,22 @@ public class SubSessionAppService {
     private final MemorySessionRelRepository relRepository;
     private final RawChatLogRepository rawChatLogRepository;
     private final KnowledgeAppService knowledgeAppService;
+    private final MetricPointRepository metricPointRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public SubSessionAppService(SubSessionRepository subSessionRepository,
                                 TaskRepository taskRepository,
                                 MemorySessionRelRepository relRepository,
                                 RawChatLogRepository rawChatLogRepository,
-                                KnowledgeAppService knowledgeAppService) {
+                                KnowledgeAppService knowledgeAppService,
+                                MetricPointRepository metricPointRepository) {
 
         this.subSessionRepository = subSessionRepository;
         this.taskRepository = taskRepository;
         this.relRepository = relRepository;
         this.rawChatLogRepository = rawChatLogRepository;
         this.knowledgeAppService = knowledgeAppService;
+        this.metricPointRepository = metricPointRepository;
     }
 
     @Transactional
@@ -75,6 +79,7 @@ public class SubSessionAppService {
         taskRepository.archiveAndDeleteBySubSessionId(subSessionId, userId, "PURGE_SUB_SESSION");
         relRepository.archiveAndDeleteBySubSessionId(subSessionId, userId, "PURGE_SUB_SESSION");
         knowledgeAppService.deleteForSubSession(subSessionId, userId);
+        metricPointRepository.archiveAndDeleteBySubSessionId(subSessionId, userId, "PURGE_SUB_SESSION");
         rawChatLogRepository.archiveAndDeleteBySubSessionId(subSessionId, userId, "PURGE_SUB_SESSION");
         subSessionRepository.archiveAndDeleteById(subSessionId, "PURGE_SUB_SESSION");
     }

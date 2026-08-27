@@ -33,6 +33,9 @@ public class TaskPO {
     private LocalDate dueDate;
     @Column(nullable = false, columnDefinition = "boolean default false")
     private boolean reminded = false;
+    /** 到点提醒时 LLM 动态生成内容的指令；为空表示纯静态提醒。 */
+    @Column(name = "ai_brief", length = 1000)
+    private String aiBrief;
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt = Instant.now();
 
@@ -69,4 +72,6 @@ public class TaskPO {
     public void setNextHint(String nextHint) { this.nextHint = nextHint; }
     public String getRecurrence() { return recurrence; }
     public void setRecurrence(String recurrence) { this.recurrence = recurrence; }
+    public String getAiBrief() { return aiBrief; }
+    public void setAiBrief(String aiBrief) { this.aiBrief = aiBrief; }
 }

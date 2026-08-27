@@ -17,13 +17,17 @@ public record ChangePreview(
         List<String> tasksCompleted,
         List<TaskChange> tasksPlanned,
         List<String> memories,
-        String note
+        String note,
+        List<String> metricCards,
+        List<String> metricPoints
 ) {
     public boolean isEmpty() {
         return fields.isEmpty() && focusAdded.isEmpty() && focusRemoved.isEmpty()
                 && tasksAdded.isEmpty() && tasksUpdated.isEmpty() && tasksRemoved.isEmpty()
                 && tasksCompleted.isEmpty() && (tasksPlanned == null || tasksPlanned.isEmpty())
-                && memories.isEmpty();
+                && memories.isEmpty()
+                && (metricCards == null || metricCards.isEmpty())
+                && (metricPoints == null || metricPoints.isEmpty());
     }
 
     /** collected 字段变更：label 旧值 -> 新值。 */

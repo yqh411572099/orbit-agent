@@ -51,8 +51,10 @@
 - **记忆系统**：2 小时增量提炼、中立记忆库 `user_memory`、多对多关联 `memory_session_rel`、结构化属性 Attribute（基类 + extras 扩展）。
 - **时间轴与任务引擎**：`TimelineAppService.resync()` 按域返回的 `PlannedTask` 幂等创建/更新/删除、保留已完成、关键字段变更后重排；任务的提醒时间/分组/历史折叠逻辑通用。
 - **定时任务（确定性，不依赖 LLM）**：
-  - `ReminderService`（固定间隔）：到提醒时间把待办推进到对应子对话。
+  - `ReminderService`（固定间隔）：到提醒时间把待办推进到对应子对话；任务带 `aiBrief` 时调 LLM 结合近况动态生成本次推送，失败降级为静态提醒。
   - `MemoryExtractionJob`（每 2 小时 cron）：增量记忆提炼与关联绑定。
+- **可视化指标卡**：`MetricAppService` 维护指标定义（存子对话 `metric_defs` JSON）与数据点（`metric_point` 表，按日累积成序列）；模型在建目标/对话中声明 `metricDefs`、从汇报中抽取 `metricPoints`；接口 `/sub-sessions/{id}/metrics` 与 `/metrics/{key}`，挂进 `/api/sync`；前端 SVG 渲染 line/bar/pie。
+- **通用计划域**：`GenericPlanScenario`（type=generic）无预设字段/关注项/时间轴，由模型分析诉求产出参数与关注项。
 - **工具体系**：`ToolCategory` 大类 + 子工具、参数 schema 自动合并、按信息可靠性分流（结构化权威数据用工具、时效文本用联网/知识库）、工具结果优先于模型猜测。内置 GeoService（高德地址解析/周边 POI）、知识库、WebSearch 等均为场景无关能力。
 - **持久化抽象**：仓储接口在 domain，实现可替换；换库只改 adapter。
 

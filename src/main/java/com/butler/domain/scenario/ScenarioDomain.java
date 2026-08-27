@@ -251,6 +251,14 @@ public interface ScenarioDomain {
         return "";
     }
 
+    /**
+     * 给模型的输出格式补充说明（JSON 各字段含义、日期要求、场景特有约束）。
+     * 通用字段由应用层统一说明，这里只放该场景特有的硬性要求。
+     */
+    default String researchOutputHint() {
+        return "";
+    }
+
     /** 时间轴规划出的待办：主任务到期日 + 可选的“提前准备”任务日期。 */
     /**
      * 一个时间轴待办。只有一个任务条目，但带两个时间：

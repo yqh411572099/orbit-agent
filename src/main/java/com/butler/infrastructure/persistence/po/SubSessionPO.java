@@ -22,6 +22,8 @@ public class SubSessionPO {
     private String customFocusLabels;
     @Lob @Column(name = "study_materials")
     private String studyMaterials;
+    @Lob @Column(name = "metric_defs")
+    private String metricDefs;
     @Column(nullable = false)
     private String status = "ACTIVE";
     @Column(name = "created_at", nullable = false)
@@ -53,6 +55,8 @@ public class SubSessionPO {
     public void setCustomFocusLabels(String customFocusLabels) { this.customFocusLabels = customFocusLabels; }
     public String getStudyMaterials() { return studyMaterials; }
     public void setStudyMaterials(String studyMaterials) { this.studyMaterials = studyMaterials; }
+    public String getMetricDefs() { return metricDefs; }
+    public void setMetricDefs(String metricDefs) { this.metricDefs = metricDefs; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public Instant getCreatedAt() { return createdAt; }

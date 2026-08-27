@@ -11,6 +11,8 @@ public class SubSession {
     private String collectedInfo;
     private String customFocusLabels;
     private String studyMaterials;
+    /** 可视化指标卡定义 JSON：[{key,label,unit,chartType}]，由 LLM 在建目标/对话中声明。 */
+    private String metricDefs;
     private SubSessionStatus status;
     private final Instant createdAt;
     private Instant updatedAt;
@@ -44,6 +46,8 @@ public class SubSession {
     public void setCustomFocusLabels(String customFocusLabels) { this.customFocusLabels = customFocusLabels; }
     public String getStudyMaterials() { return studyMaterials; }
     public void setStudyMaterials(String studyMaterials) { this.studyMaterials = studyMaterials; }
+    public String getMetricDefs() { return metricDefs; }
+    public void setMetricDefs(String metricDefs) { this.metricDefs = metricDefs; }
     public SubSessionStatus getStatus() { return status; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

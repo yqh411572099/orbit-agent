@@ -50,11 +50,43 @@ public class SpringAiLlmAdapter implements LlmPort {
                 场景类型：%s
                 用户目标：%s
                 请为每个待办推断一个明确的到期/执行日期(yyyy-MM-dd)。今天是%tF，所有日期不得早于今天；若某步骤按计划应已发生则不要生成该任务。无法确定日期则为空字符串。并把每个任务归类到最匹配的关注项 key(focusArea，无匹配则为空字符串)。
+                对“每天/每日/每周”这类要长期重复跟进的习惯或辅导（如每日饮食/食谱建议、每日训练、每日心情问候），要建成周期任务：
+                recurrence 填 daily/weekly/monthly，dueDate 填今天(yyyy-MM-dd)，remindTime 填 24 小时制 HH:mm（用户说了几点就用几点，没说按场景给合理默认，如饮食建议 08:00、睡前问候 21:00）；一次性里程碑不要填 recurrence。
+                aiBrief 字段：判断这条待办到点时是否需要“结合近况动态生成本次内容”（典型是周期性、辅导/建议类，如每天给今日食谱/训练动作/心情问候）。
+                需要则用一句话写清要生成什么、参考什么近况（如“结合用户近几日饮食记录和减重目标，给出今日三餐建议，避免与近期重复”）；一次性里程碑、纯提醒、无需变化的待办 aiBrief 留空字符串。
                 严格只输出一个JSON对象，不要任何解释、前后缀或代码块标记。
-                格式：{"sessionDesc":"...","tasks":[{"content":"...","dueDate":"2026-08-07","focusArea":"prenatal_checkup"},{"content":"...","dueDate":"","focusArea":""}]}
+                格式：{"sessionDesc":"...","tasks":[{"content":"...","dueDate":"2026-08-07","focusArea":"prenatal_checkup","aiBrief":""},{"content":"每日饮食建议","dueDate":"2026-08-25","focusArea":"diet","recurrence":"daily","remindTime":"08:00","aiBrief":"结合近几日饮食记录给今日三餐建议"}]}
+                metricDefs：如果这个目标有“需要长期追踪、适合在子对话里展示数值卡+趋势图”的可量化指标（如减重的体重/体脂率、考证的模考分数、学习时长），给出指标定义数组：
+                key=小写下划线标识，label=中文名，unit=单位，chartType=趋势用 line、占比用 pie、离散对比用 bar；没有则为空数组。
+                输出 JSON 追加字段："metricDefs":[{"key":"weight","label":"当前体重","unit":"kg","chartType":"line"}]
                 """.formatted(scenarioType, userGoal, LocalDate.now(ZONE));
         Map<String, Object> m = callForObject(prompt);
-        return new CreateGoalResult(str(m.get("sessionDesc")), toTaskItems(m.get("tasks")));
+        return new CreateGoalResult(str(m.get("sessionDesc")), toTaskItems(m.get("tasks")),
+                toMetricDefs(m.get("metricDefs")));
+    }
+
+    @Override
+    public String composeReminder(String sessionDesc, String taskContent, String aiBrief,
+                                  List<String> recentDialog, LocalDate today) {
+        String dialog = recentDialog == null || recentDialog.isEmpty() ? "（暂无近期对话）"
+                : String.join("\n", recentDialog);
+        String prompt = """
+                你是用户的长期目标管家，现在到了一条定时跟进事项的推送时间。请结合用户近况，生成本次要主动推送给用户的内容。
+                今天是 %tF。
+                跟进事项：%s
+                本次要生成的内容指令：%s
+                目标场景：%s
+                近期对话（供参考，避免与近期重复、要承接用户近况）：
+                %s
+                要求：
+                - 直接输出可发给用户的正文（中文，口语、简洁、可执行），不要 JSON、不要标题、不要前后缀、不要说“这是AI生成”；
+                - 给出具体可执行的建议/清单，不要泛泛而谈；若是食谱/训练等，直接给今天的具体内容；
+                - 不要编造用户没提供的健康数据；信息不足就给通用建议并温和提示可补充的信息；
+                - 控制在 150 字以内。
+                """.formatted(today, taskContent, aiBrief,
+                sessionDesc == null ? "" : sessionDesc, dialog);
+        String content = chatClient.prompt().user(prompt).call().content();
+        return content == null ? "" : content.strip();
     }
 
     @Override
@@ -70,8 +102,9 @@ public class SpringAiLlmAdapter implements LlmPort {
                 - 对周期性任务，remindTime 必填，为 24 小时制的 HH:mm：把用户说的“早上8点/晚上9点半/饭后”等自然语言换算成 HH:mm（晚上8点半=20:30，早上7点=07:00）；用户未指定时刻则填 "09:00"。一次性任务 remindTime 留空。
                 - focusArea 为任务所属关注项 key（用户新增的关注项用其 key），无匹配留空。
                 - detail 可填一句执行要点/准备事项，没有留空。
+                - aiBrief：该待办到点需要结合近况动态生成本次内容（如每天给今日食谱/训练建议）时，用一句话写清生成什么；一次性里程碑、纯提醒留空字符串。已存在任务若原 aiBrief 仍适用请原样保留。
                 - 如果新信息改变了关键日期（如预产期/检查日期变更），相应重排相关任务；用户明确停止/不再做的事项从列表删除。
-                只输出 JSON：{"tasks":[{"content":"...","dueDate":"2026-08-07","focusArea":"skin_care","detail":"...","recurrence":"daily","remindTime":"20:30"}]}
+                只输出 JSON：{"tasks":[{"content":"...","dueDate":"2026-08-07","focusArea":"skin_care","detail":"...","recurrence":"daily","remindTime":"20:30","aiBrief":"..."}]}
                 """.formatted(sessionDesc, currentTasks, newMessage, LocalDate.now(ZONE));
         Map<String, Object> m = callForObject(prompt);
         return new AdjustTasksResult(toTaskItems(m.get("tasks")));
@@ -185,6 +218,7 @@ public class SpringAiLlmAdapter implements LlmPort {
                 4. 如果用户给了某日的孕周（如“7月26日是孕7周+1d”），请据此推算预产期（预产期≈该日期+（40周-当前孕周））并填入 collected 的对应日期字段，不要再追问预产期。
                 5. 对于 select 类型字段（如孕期 role 身份），collected 的值必须从该字段给出的可选项中选一个原文；若用户表明“我是准爸爸/帮老婆问”，role 设为“准爸爸（男方）”，否则默认“准妈妈（女方）”。
                 6. focusAreas：只有用户明确选择、点名或确认的关注项才返回 key；不要仅根据诉求自动补关注项。用户未明确提及则返回空数组（系统会使用默认/强制关注项）。
+                7. 若用户想创建计划/目标，但不属于孕期、考研、考证等专门类型，scenarioType 设为 "generic"（通用计划，由后续分析拆解）；不要因为没有完全匹配的专门类型就返回空。
                 输出 JSON：
                 {"wantsToCreate":true/false,
                  "scenarioType":"匹配的 type，无法确定则为空字符串",
@@ -251,7 +285,14 @@ public class SpringAiLlmAdapter implements LlmPort {
                 - 用户要新增的关注项不在内置列表里时，enableFocusAreas 用 "custom_key|中文名称" 格式：custom_key 用小写英文蛇形命名（如 skin_care），中文名称即用户表述的关注项名（如 皮肤与身体护理）。内置项不要带名称后缀。
                 - 没有增删意图时两个数组都为空。
                 - affectsTasks（布尔）：只有当用户这句话确实在“新增/修改/删除/调整待办、提醒、关注项，或改动提醒时间/周期”时才为 true；纯咨询、提问、闲聊、查询政策/怎么办理、让你解释或推荐等都为 false。判断要保守，拿不准就 false。
+                - metricDefs：当用户希望在子对话里持续看到某个可量化指标卡/图表（如“右上角展示我的体重”“记录每天体重变化”“追踪我的模考分数”）时，给出该指标定义数组：
+                  key=小写下划线指标标识（weight/body_fat/mock_score…），label=中文名（当前体重/体脂率/模考分数），unit=单位（kg、百分号、分），
+                  chartType=适合的图表类型：随时间变化的单值趋势用 line（体重、分数），对比构成占比用 pie，少量离散对比用 bar；没有这类诉求返回空数组。
+                - metricPoints：用户这次明确汇报了可记录的数值（如“今天体重78.5公斤”“这次考了128分”）时，给出数据点数组：
+                  key=对应 metricDefs 的 key（未定义就用合适的新 key），value=数值（数字），date=该数据日期 yyyy-MM-dd（用户说“今天/没说日期”就用今天）。只是表达想记录的意愿而没给数值，不要编造，返回空数组。
+                  unit 与 value 保持一致：用户用什么单位报数（斤/kg/分…），指标定义的 unit 就用该单位、value 就填用户报的原始数值，不要自行换算单位。
                 - 没有任何变化时所有字段返回空（affectsTasks 为 false）。
+                输出 JSON 在原字段基础上追加："metricDefs":[{"key":"weight","label":"当前体重","unit":"kg","chartType":"line"}],"metricPoints":[{"key":"weight","value":78.5,"date":"2026-08-27"}]
                 """.formatted(scenarioType, fields, collectedInfo == null ? "" : collectedInfo, newMessage, LocalDate.now(ZONE));
         Map<String, Object> m = callForObject(prompt);
         java.util.Map<String, String> fieldUpdates = toStringMap(m.get("fieldUpdates"));
@@ -260,7 +301,9 @@ public class SpringAiLlmAdapter implements LlmPort {
                 toStrList(m.get("enableFocusAreas")),
                 toStrList(m.get("disableFocusAreas")),
                 str(m.get("note")),
-                Boolean.TRUE.equals(m.get("affectsTasks")));
+                Boolean.TRUE.equals(m.get("affectsTasks")),
+                toMetricDefs(m.get("metricDefs")),
+                toMetricPoints(m.get("metricPoints")));
     }
 
     private Map<String, Object> callForObject(String prompt) {
@@ -326,10 +369,37 @@ public class SpringAiLlmAdapter implements LlmPort {
                 if (due.isBlank()) due = str(mm.get("due_date"));
                 result.add(new TaskItem(content, due, str(mm.get("focusArea")),
                         str(mm.get("detail")), normalizeRecurrence(str(mm.get("recurrence"))),
-                        str(mm.get("remindTime"))));
+                        str(mm.get("remindTime")), str(mm.get("aiBrief"))));
             } else if (e != null) {
                 result.add(new TaskItem(String.valueOf(e), "", "", "", "", ""));
             }
+        }
+        return result;
+    }
+
+    private List<MetricDef> toMetricDefs(Object o) {
+        if (!(o instanceof List<?> list)) return List.of();
+        List<MetricDef> result = new ArrayList<>();
+        for (Object e : list) {
+            if (!(e instanceof Map<?, ?> mm)) continue;
+            String key = str(mm.get("key")).trim();
+            if (key.isBlank()) continue;
+            String chart = str(mm.get("chartType")).trim().toLowerCase();
+            if (!chart.equals("line") && !chart.equals("bar") && !chart.equals("pie")) chart = "line";
+            result.add(new MetricDef(key, str(mm.get("label")), str(mm.get("unit")), chart));
+        }
+        return result;
+    }
+
+    private List<MetricPointIn> toMetricPoints(Object o) {
+        if (!(o instanceof List<?> list)) return List.of();
+        List<MetricPointIn> result = new ArrayList<>();
+        for (Object e : list) {
+            if (!(e instanceof Map<?, ?> mm)) continue;
+            String key = str(mm.get("key")).trim();
+            Double value = toDouble(mm.get("value"));
+            if (key.isBlank() || value == null) continue;
+            result.add(new MetricPointIn(key, value, str(mm.get("date"))));
         }
         return result;
     }

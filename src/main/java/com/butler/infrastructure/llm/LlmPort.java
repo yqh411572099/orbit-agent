@@ -10,6 +10,13 @@ public interface LlmPort {
 
     AdjustTasksResult adjustTasks(String sessionDesc, List<TaskItem> currentTasks, String newMessage);
 
+    /**
+     * 到点提醒时，针对“需 LLM 介入”的任务动态生成本次推送内容（如结合近几日饮食给今日食谱）。
+     * recentDialog 为该子对话最近的用户/管家对话行（已正序）。返回生成的正文；无法生成返回空串。
+     */
+    String composeReminder(String sessionDesc, String taskContent, String aiBrief,
+                           List<String> recentDialog, java.time.LocalDate today);
+
     /** 从原始对话中提炼多条结构化记忆并判定关联子会话。attributeSchema 为各场景的属性目录文本。 */
     ExtractResult extractAndAssociate(String rawConversation, List<String> activeSessionDescs, String attributeSchema, String existingMemories);
 
@@ -26,6 +33,12 @@ public interface LlmPort {
     ScenarioEvent extractScenarioEvent(String scenarioType, List<String> keyFieldHints,
                                       String collectedInfo, String newMessage);
 
+    /** 一个可视化指标卡定义：模型决定展示哪个指标、单位、用什么图表。 */
+    record MetricDef(String key, String label, String unit, String chartType) {}
+
+    /** 一条指标数据点（用户汇报的数值）。date 为 yyyy-MM-dd，缺省取今天。 */
+    record MetricPointIn(String key, Double value, String date) {}
+
     /**
      * @param fieldUpdates      关键目标字段的新值，如 {"dueDate":"2027-05-01"}
      * @param completedKeywords 已完成里程碑关键词
@@ -35,20 +48,33 @@ public interface LlmPort {
      */
     record ScenarioEvent(java.util.Map<String,String> fieldUpdates, List<String> completedKeywords,
                          List<String> enableFocusAreas, List<String> disableFocusAreas, String note,
-                         boolean affectsTasks) {
+                         boolean affectsTasks, List<MetricDef> metricDefs, List<MetricPointIn> metricPoints) {
         public ScenarioEvent(java.util.Map<String,String> fieldUpdates, List<String> completedKeywords,
                              List<String> enableFocusAreas, List<String> disableFocusAreas, String note) {
-            this(fieldUpdates, completedKeywords, enableFocusAreas, disableFocusAreas, note, false);
+            this(fieldUpdates, completedKeywords, enableFocusAreas, disableFocusAreas, note, false, List.of(), List.of());
+        }
+        public ScenarioEvent(java.util.Map<String,String> fieldUpdates, List<String> completedKeywords,
+                             List<String> enableFocusAreas, List<String> disableFocusAreas, String note,
+                             boolean affectsTasks) {
+            this(fieldUpdates, completedKeywords, enableFocusAreas, disableFocusAreas, note, affectsTasks, List.of(), List.of());
         }
     }
 
-    record TaskItem(String content, String dueDate, String focusArea, String detail, String recurrence, String remindTime) {
+    record TaskItem(String content, String dueDate, String focusArea, String detail, String recurrence,
+                    String remindTime, String aiBrief) {
         public TaskItem(String content, String dueDate, String focusArea) { this(content, dueDate, focusArea, "", "", ""); }
         public TaskItem(String content, String dueDate, String focusArea, String detail, String recurrence) {
-            this(content, dueDate, focusArea, detail, recurrence, "");
+            this(content, dueDate, focusArea, detail, recurrence, "", "");
+        }
+        public TaskItem(String content, String dueDate, String focusArea, String detail, String recurrence, String remindTime) {
+            this(content, dueDate, focusArea, detail, recurrence, remindTime, "");
         }
     }
-    record CreateGoalResult(String sessionDesc, List<TaskItem> tasks) {}
+    record CreateGoalResult(String sessionDesc, List<TaskItem> tasks, List<MetricDef> metricDefs) {
+        public CreateGoalResult(String sessionDesc, List<TaskItem> tasks) {
+            this(sessionDesc, tasks, List.of());
+        }
+    }
     record AdjustTasksResult(List<TaskItem> tasks) {}
 
     /**

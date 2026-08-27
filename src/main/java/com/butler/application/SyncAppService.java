@@ -37,6 +37,7 @@ public class SyncAppService {
     private final PendingProposalStore pendingProposalStore;
     private final PendingEventRepository pendingEventRepository;
     private final MissionRepository missionRepository;
+    private final MetricAppService metricAppService;
     private final ObjectMapper objectMapper;
 
     public SyncAppService(RawChatLogRepository rawChatLogRepository,
@@ -49,6 +50,7 @@ public class SyncAppService {
                           PendingProposalStore pendingProposalStore,
                           PendingEventRepository pendingEventRepository,
                           MissionRepository missionRepository,
+                          MetricAppService metricAppService,
                           ObjectMapper objectMapper) {
         this.rawChatLogRepository = rawChatLogRepository;
         this.subSessionRepository = subSessionRepository;
@@ -60,6 +62,7 @@ public class SyncAppService {
         this.pendingProposalStore = pendingProposalStore;
         this.pendingEventRepository = pendingEventRepository;
         this.missionRepository = missionRepository;
+        this.metricAppService = metricAppService;
         this.objectMapper = objectMapper;
     }
 
@@ -189,6 +192,7 @@ public class SyncAppService {
             data.put("state", conversationAppService.getState(subSessionId));
             data.put("customFocus", conversationAppService.getCustomFocusLabels(subSessionId));
             data.put("materials", subSessionAppService.getStudyMaterials(subSessionId));
+            data.put("metrics", metricAppService.latest(subSessionId));
             block.put("data", data);
         }
         return block;

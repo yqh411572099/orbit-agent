@@ -2,6 +2,7 @@ package com.butler.perception.api;
 
 import com.butler.application.ConversationAppService;
 import com.butler.application.GoalAppService;
+import com.butler.application.MetricAppService;
 import com.butler.application.TaskQueryAppService;
 import com.butler.domain.attribute.AttributeRenderer;
 import com.butler.domain.model.*;
@@ -22,15 +23,18 @@ public class ConversationController {
     private final GoalAppService goalAppService;
     private final TaskQueryAppService taskQueryAppService;
     private final MemoryQueryService memoryQueryService;
+    private final MetricAppService metricAppService;
 
     public ConversationController(ConversationAppService conversationAppService,
                                   GoalAppService goalAppService,
                                   TaskQueryAppService taskQueryAppService,
-                                  MemoryQueryService memoryQueryService) {
+                                  MemoryQueryService memoryQueryService,
+                                  MetricAppService metricAppService) {
         this.conversationAppService = conversationAppService;
         this.goalAppService = goalAppService;
         this.taskQueryAppService = taskQueryAppService;
         this.memoryQueryService = memoryQueryService;
+        this.metricAppService = metricAppService;
     }
 
     /** 主对话创建新目标。 */
@@ -50,6 +54,18 @@ public class ConversationController {
         SessionType type = SessionType.valueOf(req.sessionType().toUpperCase());
         RawChatLog log = conversationAppService.ingest(userId, type, req.subSessionId(), req.content());
         return log.getId();
+    }
+
+    /** 子对话头部指标卡：每个指标的最新值。 */
+    @GetMapping("/sub-sessions/{subSessionId}/metrics")
+    public List<MetricAppService.Point> metrics(@PathVariable Long subSessionId) {
+        return metricAppService.latest(subSessionId);
+    }
+
+    /** 点击指标卡：该指标完整时间序列 + 图表类型。 */
+    @GetMapping("/sub-sessions/{subSessionId}/metrics/{key}")
+    public Map<String, Object> metricSeries(@PathVariable Long subSessionId, @PathVariable String key) {
+        return metricAppService.series(subSessionId, key);
     }
 
     @GetMapping("/sub-sessions/{subSessionId}/tasks")

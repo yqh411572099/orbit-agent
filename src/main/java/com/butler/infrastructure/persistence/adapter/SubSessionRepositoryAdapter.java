@@ -31,6 +31,7 @@ public class SubSessionRepositoryAdapter implements SubSessionRepository {
         po.setCollectedInfo(s.getCollectedInfo());
         po.setCustomFocusLabels(s.getCustomFocusLabels());
         po.setStudyMaterials(s.getStudyMaterials());
+        po.setMetricDefs(s.getMetricDefs());
         po.setStatus(s.getStatus().name());
         po.setCreatedAt(s.getCreatedAt());
         SubSessionPO saved = jpa.save(po);
@@ -74,6 +75,7 @@ public class SubSessionRepositoryAdapter implements SubSessionRepository {
                 po.getSessionDesc(), po.getCollectedInfo(), SubSessionStatus.valueOf(po.getStatus()), po.getCreatedAt());
         s.setCustomFocusLabels(po.getCustomFocusLabels());
         s.setStudyMaterials(po.getStudyMaterials());
+        s.setMetricDefs(po.getMetricDefs());
         s.setUpdatedAt(po.getUpdatedAt());
         return s;
     }

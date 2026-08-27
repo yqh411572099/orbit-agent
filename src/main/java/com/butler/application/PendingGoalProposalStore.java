@@ -81,12 +81,14 @@ public class PendingGoalProposalStore {
             String goalText,
             Map<String, String> collected,
             List<String> focusAreas,
+            Map<String, String> focusLabels,
             List<Section> sections,
             List<StudyMaterial> materials
     ) {
         public GoalProposal {
             collected = collected == null ? Map.of() : Map.copyOf(collected);
             focusAreas = focusAreas == null ? List.of() : List.copyOf(focusAreas);
+            focusLabels = focusLabels == null ? Map.of() : Map.copyOf(focusLabels);
             sections = sections == null ? List.of() : List.copyOf(sections);
             materials = materials == null ? List.of() : List.copyOf(materials);
         }

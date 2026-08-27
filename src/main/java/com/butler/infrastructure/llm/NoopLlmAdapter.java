@@ -16,6 +16,11 @@ public class NoopLlmAdapter implements LlmPort {
         return new AdjustTasksResult(currentTasks.isEmpty() ? List.of(new TaskItem("跟进：" + newMessage, "", "", "", "", "")) : currentTasks);
     }
     @Override
+    public String composeReminder(String sessionDesc, String taskContent, String aiBrief,
+                                  List<String> recentDialog, java.time.LocalDate today) {
+        return "";
+    }
+    @Override
     public ExtractResult extractAndAssociate(String rawConversation, List<String> activeSessionDescs, String attributeSchema, String existingMemories) {
         String memory = rawConversation == null ? "" : rawConversation.lines().findFirst().orElse("");
         if (memory.isBlank()) return new ExtractResult(List.of());

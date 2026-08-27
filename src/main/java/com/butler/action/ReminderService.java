@@ -7,9 +7,11 @@ import com.butler.domain.model.Task;
 import com.butler.domain.repository.RawChatLogRepository;
 import com.butler.domain.repository.SubSessionRepository;
 import com.butler.domain.repository.TaskRepository;
+import com.butler.infrastructure.llm.LlmPort;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,13 +34,16 @@ public class ReminderService {
     private final TaskRepository taskRepository;
     private final SubSessionRepository subSessionRepository;
     private final RawChatLogRepository rawChatLogRepository;
+    private final LlmPort llmPort;
 
     public ReminderService(TaskRepository taskRepository,
                            SubSessionRepository subSessionRepository,
-                           RawChatLogRepository rawChatLogRepository) {
+                           RawChatLogRepository rawChatLogRepository,
+                           LlmPort llmPort) {
         this.taskRepository = taskRepository;
         this.subSessionRepository = subSessionRepository;
         this.rawChatLogRepository = rawChatLogRepository;
+        this.llmPort = llmPort;
     }
 
     /** 每分钟扫描一次到期任务并推送（fixedRate 可被配置覆盖，测试用 fixedDelay 防止重叠）。 */
@@ -92,13 +97,47 @@ public class ReminderService {
             dateText = "（" + formatDate(task.getDueDate()) + "）";
         }
         StringBuilder content = new StringBuilder("⏰ 待办提醒：" + task.getContent() + dateText);
-        if (task.getDetail() != null && !task.getDetail().isBlank()) {
+        String dynamic = composeDynamicContent(task, sub);
+        if (dynamic != null && !dynamic.isBlank()) {
+            content.append("\n\n").append(dynamic.strip());
+        } else if (task.getDetail() != null && !task.getDetail().isBlank()) {
             content.append("\n📌 ").append(task.getDetail());
         }
         content.append("\n如果已完成，可以告诉我，我帮你标记并更新计划。");
         rawChatLogRepository.save(new RawChatLog(
                 null, sub.getUserId(), SessionType.SUB, task.getSubSessionId(),
                 "system", content.toString(), null, Instant.now()));
+    }
+
+    /**
+     * 需 LLM 介入的任务：结合该子对话近几日用户/管家对话，动态生成本次推送内容。
+     * 模型异常或返回空时返回 null，调用方降级为静态详情/普通提醒，保证提醒链路不依赖模型可用性。
+     */
+    private String composeDynamicContent(Task task, SubSession sub) {
+        if (!task.isAiAssisted()) return null;
+        try {
+            List<RawChatLog> recent = rawChatLogRepository.findRecent(
+                    sub.getUserId(), SessionType.SUB, sub.getId(), 30);
+            List<String> lines = new ArrayList<>();
+            // findRecent 按 id 倒序返回，反转为正序，便于模型按时间理解近况。
+            for (int i = recent.size() - 1; i >= 0; i--) {
+                RawChatLog log = recent.get(i);
+                String role = log.getRole();
+                if ("user".equals(role) || "assistant".equals(role)) {
+                    String text = log.getContent() == null ? "" : log.getContent().strip();
+                    if (text.isBlank()) continue;
+                    if (text.length() > 300) text = text.substring(0, 300) + "…";
+                    lines.add(("user".equals(role) ? "用户：" : "管家：") + text);
+                }
+            }
+            LocalDate today = LocalDate.now(ZONE);
+            String message = llmPort.composeReminder(sub.getSessionDesc(), task.getContent(),
+                    task.getAiBrief(), lines, today);
+            return message == null ? null : message.strip();
+        } catch (Exception e) {
+            log.warn("动态提醒内容生成失败，降级为静态提醒 taskId={} err={}", task.getId(), e.getMessage());
+            return null;
+        }
     }
 
     /** 手动触发一次（供测试/管理接口调用）。 */

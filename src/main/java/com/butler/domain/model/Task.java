@@ -23,6 +23,8 @@ public class Task {
     private final Instant remindAt;
     private final LocalDate dueDate;
     private boolean reminded;
+    /** 到点提醒时是否需要 LLM 结合近况动态生成内容；非空表示需要，内容为给模型的生成指令。 */
+    private final String aiBrief;
 
     public static Task createScheduled(Long subSessionId, String content, LocalDate dueDate) {
         return createScheduled(subSessionId, content, null, null, null, null, dueDate);
@@ -97,7 +99,20 @@ public class Task {
         LocalTime time = remindTime != null ? remindTime : LocalTime.of(9, 0);
         Instant remindAt = remindOn == null ? null
                 : remindOn.atTime(time).atZone(ZoneId.of("Asia/Shanghai")).toInstant();
-        return new Task(null, subSessionId, content, detail, nextHint, moduleKey, milestoneKey, recurrence, focusArea, false, remindAt, dueDate, false);
+        return new Task(null, subSessionId, content, detail, nextHint, moduleKey, milestoneKey, recurrence, focusArea, false, remindAt, dueDate, false, null);
+    }
+
+    /**
+     * 动态（LLM 规划）任务：可带周期、提醒时刻与 AI 生成指令。
+     * aiBrief 非空时，到点提醒会调用 LLM 结合近况动态生成本次推送内容（如每日食谱）。
+     */
+    public static Task createDynamic(Long subSessionId, String content, String detail, String focusArea,
+                                     LocalDate dueDate, String recurrence, LocalTime remindTime, String aiBrief) {
+        LocalDate due = dueDate != null ? dueDate : LocalDate.now(ZoneId.of("Asia/Shanghai"));
+        LocalTime time = remindTime != null ? remindTime : LocalTime.of(9, 0);
+        Instant remindAt = due.atTime(time).atZone(ZoneId.of("Asia/Shanghai")).toInstant();
+        return new Task(null, subSessionId, content, detail, null, null, null, recurrence, focusArea,
+                false, remindAt, due, false, aiBrief);
     }
 
     /** 解析提醒时刻，仅接受 HH:mm（24 小时制），无法解析返回 null。 */
@@ -144,6 +159,13 @@ public class Task {
 
     public Task(Long id, Long subSessionId, String content, String detail, String nextHint, String moduleKey,
                 String milestoneKey, String recurrence, String focusArea, boolean completed, Instant remindAt, LocalDate dueDate, boolean reminded) {
+        this(id, subSessionId, content, detail, nextHint, moduleKey, milestoneKey, recurrence, focusArea,
+                completed, remindAt, dueDate, reminded, null);
+    }
+
+    public Task(Long id, Long subSessionId, String content, String detail, String nextHint, String moduleKey,
+                String milestoneKey, String recurrence, String focusArea, boolean completed, Instant remindAt,
+                LocalDate dueDate, boolean reminded, String aiBrief) {
         this.id = id;
         this.subSessionId = subSessionId;
         this.content = content;
@@ -157,6 +179,7 @@ public class Task {
         this.remindAt = remindAt;
         this.dueDate = dueDate;
         this.reminded = reminded;
+        this.aiBrief = aiBrief;
     }
 
     public static LocalDate parseDueDate(String raw) {
@@ -203,13 +226,16 @@ public class Task {
     public Instant getRemindAt() { return remindAt; }
     public LocalDate getDueDate() { return dueDate; }
     public boolean isReminded() { return reminded; }
+    public String getAiBrief() { return aiBrief; }
+    /** 到点提醒是否需要 LLM 结合近况动态生成本次内容。 */
+    public boolean isAiAssisted() { return aiBrief != null && !aiBrief.isBlank(); }
 
     /** 把周期任务重新排到指定日期（保留提醒时刻），用于把过期的“每天/每周”任务滚动到今天。 */
     public Task rescheduleTo(LocalDate date) {
         LocalTime time = getRemindTime() != null ? getRemindTime() : LocalTime.of(9, 0);
         Instant remind = date.atTime(time).atZone(ZoneId.of("Asia/Shanghai")).toInstant();
         return new Task(id, subSessionId, content, detail, nextHint, moduleKey, milestoneKey,
-                recurrence, focusArea, completed, remind, date, false);
+                recurrence, focusArea, completed, remind, date, false, aiBrief);
     }
 
     public void markCompleted() { this.completed = true; }
@@ -249,7 +275,7 @@ public class Task {
         return new Task(null, subSessionId, content, detail, nextHint, moduleKey, milestoneKey,
                 recurrence, focusArea, false,
                 remindOn.atTime(time).atZone(ZoneId.of("Asia/Shanghai")).toInstant(),
-                base, false);
+                base, false, aiBrief);
     }
 
     /** 用运行时检索到的地区政策要点补充任务详情。 */

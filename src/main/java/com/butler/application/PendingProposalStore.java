@@ -33,7 +33,8 @@ public class PendingProposalStore {
                               Map<String, String> newCollected, List<String> effectiveFocus,
                               Map<String, String> customFocusLabels,
                               List<Attribute> memoryUpserts, List<String> completedKeywords,
-                              List<LlmPort.TaskItem> plannedDynamicTasks) {
+                              List<LlmPort.TaskItem> plannedDynamicTasks,
+                              List<LlmPort.MetricDef> metricDefs, List<LlmPort.MetricPointIn> metricPoints) {
         String id = UUID.randomUUID().toString();
         Instant now = Instant.now();
         Instant expires = now.plusSeconds(TTL_SECONDS);
@@ -44,7 +45,9 @@ public class PendingProposalStore {
                 memoryUpserts == null ? List.of() : List.copyOf(memoryUpserts),
                 completedKeywords == null ? List.of() : List.copyOf(completedKeywords),
                 plannedDynamicTasks == null ? List.of() : List.copyOf(plannedDynamicTasks),
-                expires);
+                expires,
+                metricDefs == null ? List.of() : List.copyOf(metricDefs),
+                metricPoints == null ? List.of() : List.copyOf(metricPoints));
         try {
             repository.save(new PendingEvent(id, userId, PendingEvent.Scope.SUB, subSessionId,
                     EVENT_TYPE, objectMapper.writeValueAsString(proposal),
@@ -104,7 +107,9 @@ public class PendingProposalStore {
             StoredProposal p = objectMapper.readValue(e.getPayload(), StoredProposal.class);
             return new StoredProposal(e.getId(), p.userId(), p.subSessionId(), p.scenarioType(), p.message(),
                     p.newCollected(), p.effectiveFocus(), p.customFocusLabels(), p.memoryUpserts(),
-                    p.completedKeywords(), p.plannedDynamicTasks(), e.getExpiresAt());
+                    p.completedKeywords(), p.plannedDynamicTasks(), e.getExpiresAt(),
+                    p.metricDefs() == null ? List.of() : p.metricDefs(),
+                    p.metricPoints() == null ? List.of() : p.metricPoints());
         } catch (Exception ex) {
             return null;
         }
@@ -122,6 +127,8 @@ public class PendingProposalStore {
             List<Attribute> memoryUpserts,
             List<String> completedKeywords,
             List<LlmPort.TaskItem> plannedDynamicTasks,
-            Instant expiresAt
+            Instant expiresAt,
+            List<LlmPort.MetricDef> metricDefs,
+            List<LlmPort.MetricPointIn> metricPoints
     ) {}
 }

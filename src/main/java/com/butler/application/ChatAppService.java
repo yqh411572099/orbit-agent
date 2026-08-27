@@ -308,37 +308,38 @@ public class ChatAppService {
         List<LlmPort.ToolDef> tools = toolRegistry.forScenario(domain.toolCategories()).stream()
                 .map(c -> new LlmPort.ToolDef(c.name(), c.description(), c.parametersSchema()))
                 .toList();
-        if (tools.isEmpty()) {
-            return null;
-        }
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Shanghai"));
         String locHint = locationHint(userId);
+        String toolLead = tools.isEmpty()
+                ? "请基于用户诉求分析并给出方案；涉及你不确定的实时信息（政策/入口/日期），在对应行标注 uncertain。"
+                : "你可以调用联网搜索/知识库工具查清楚再给方案，不要凭记忆编造日期、入口或政策。";
+        String fieldsHint = domain.collectFields().isEmpty()
+                ? "该场景无固定字段：collected 用于放你从诉求中提炼的关键参数（目标日期、数量、地点、人物角色等），key 用英文驼峰，value 用文本，日期用 yyyy-MM-dd。"
+                : "collected 只能使用该场景收集字段的 key："
+                    + domain.collectFields().stream().map(f -> f.key() + "(" + f.label() + ")").toList();
         String systemPrompt = """
-                你是用户的个人目标规划助理。用户想创建一个「%s」目标，但这类目标信息因具体选择差异很大，
-                你必须先调用联网搜索/知识库工具查清楚再给方案，不要凭记忆编造日期、入口或政策。
-                调研要点：
+                你是用户的个人目标规划助理。用户想创建一个「%s」目标。%s
                 %s
 
-                今天是 %tF。请多次调用工具核实后，最终只输出一个 JSON 对象（不要代码块、不要解释）：
+                今天是 %tF。%s 最终只输出一个 JSON 对象（不要代码块、不要解释）：
                 {
                   "title": "简短目标标题",
                   "goalText": "一句话描述这个目标",
                   "collected": { "字段key": "值" },
-                  "sections": [
-                    {"icon":"🏛️","title":"证书与机构","rows":[{"label":"...","value":"...","uncertain":false}]}
-                  ]
+                  "focusAreas": [ "方面1", {"key":"可选","label":"方面2"} ],
+                  "sections": [ {"icon":"📌","title":"分组","rows":[{"label":"...","value":"...","uncertain":false}]} ],
+                  "materials": [ {"title":"...","url":"..."} ]
                 }
-                collected 只能使用该场景收集字段的 key：%s。日期必须是精确到日的 yyyy-MM-dd 格式；
-                examDate 必须填“今天之后最近的一次可报考期”的开考日期（若官方只公布到月份，取该月常见考试日并在 rows 标注待确认，不要留空）；
-                查不到的报名/查分日期留空并在 rows 里标注待确认，不要把报名/查分日期填到 examDate。
-                sections 用中文，分组展示你核实到的：证书类型/发证机构、报考条件、报名与考试时间、考试内容与教材、官方入口与查分领证；
-                若最近一次可报的考试距今已不足60天（按今天计算），必须在 sections 中用醒目一行提示“本次考期较紧，是否赶这次？若时间不够可改报下个考期”，并同时给出下个考期（若查得到）；不要默默跳过近期考试。
-                每条信息若不确定，把 uncertain 设为 true 并在 value 中标注“待确认/以官方为准”。
-                materials 列出官方教材、大纲、报名/查分入口等可直接访问的资料链接（来自联网检索结果的真实 url，不要编造）：每项 {"title":"...","url":"..."}；没有可靠链接就给空数组。
+                - focusAreas：需要分块跟进的“方面/关注项”（最多6个），每一项后续会成为一个独立的待办分组；可以是字符串，或 {"key":"英文标识","label":"中文名"}。
+                - sections：用中文分 2-5 组，向用户展示你的分析（目标拆解、关键参数、里程碑/时间节点、风险或注意事项）；不确定的信息 uncertain=true 并标注“待确认”。
+                - %s
+                - %s
                 %s
-                """.formatted(domain.displayName(), domain.researchBrief(), today,
-                domain.collectFields().stream().map(f -> f.key() + "(" + f.label() + ")").toList(),
-                locHint);
+                %s
+                """.formatted(domain.displayName(), toolLead, domain.researchBrief(), today,
+                tools.isEmpty() ? "分析后" : "调用工具核实后",
+                "materials：相关资料链接（报名入口、教材、政策官网等），无则返回空数组。",
+                fieldsHint, domain.researchOutputHint(), locHint);
 
         List<LlmPort.ChatMessage> messages = new ArrayList<>();
         messages.add(new LlmPort.ChatMessage("user", seed));
@@ -399,7 +400,7 @@ public class ChatAppService {
             sections.add(0, new Section("⚠️", "考期确认",
                     List.of(new Row("请确认", warn, true))));
             return new GoalProposal(p.scenarioType(), p.title(), p.goalText(), p.collected(),
-                    p.focusAreas(), sections, p.materials());
+                    p.focusAreas(), p.focusLabels(), sections, p.materials());
         }
         return p;
     }
@@ -440,10 +441,26 @@ public class ChatAppService {
                 String u = m.path("url").asText("");
                 if (!t.isBlank() && !u.isBlank()) materials.add(new PendingGoalProposalStore.StudyMaterial(t, u));
             }
+            List<String> focusAreas = new ArrayList<>();
+            Map<String, String> focusLabels = new LinkedHashMap<>();
+            for (JsonNode f : root.path("focusAreas")) {
+                if (f.isTextual()) {
+                    String key = "custom_" + (focusAreas.size() + 1);
+                    focusAreas.add(key);
+                    focusLabels.put(key, f.asText(""));
+                } else if (f.isObject()) {
+                    String label = f.path("label").asText(f.path("name").asText(""));
+                    if (label.isBlank()) continue;
+                    String key = f.has("key") && !f.path("key").asText("").isBlank()
+                            ? f.path("key").asText() : "custom_" + (focusAreas.size() + 1);
+                    focusAreas.add(key);
+                    focusLabels.put(key, label);
+                }
+            }
             String title = root.path("title").asText("");
             String goalText = root.path("goalText").asText(title);
             if (title.isBlank()) return null;
-            return new GoalProposal(scenarioType, title, goalText, collected, List.of(), sections, materials);
+            return new GoalProposal(scenarioType, title, goalText, collected, focusAreas, focusLabels, sections, materials);
         } catch (Exception e) {
             log.warn("解析建目标调研结果失败: {}", e.getMessage());
             return null;
@@ -458,6 +475,15 @@ public class ChatAppService {
         } catch (Exception e) {
             log.warn("保存学习资料失败: {}", e.getMessage());
         }
+    }
+
+    /** 保存 LLM 生成的自定义关注项 key→中文label 映射（通用计划等无内置关注项的场景）。 */
+    private void saveCustomFocusLabels(SubSession sub, Map<String, String> focusLabels) {
+        if (sub == null || focusLabels == null || focusLabels.isEmpty()) return;
+        java.util.Map<String, String> existing = CustomFocusLabels.read(sub);
+        existing.putAll(focusLabels);
+        CustomFocusLabels.write(sub, existing);
+        subSessionRepository.save(sub);
     }
 
     private String proposalAnnounce(GoalProposal p) {
@@ -486,8 +512,9 @@ public class ChatAppService {
         }
         GoalProposal p = sp.proposal();
         SubSession sub = goalAppService.createGoal(userId, p.scenarioType(), p.title(),
-                p.goalText(), p.collected(), p.focusAreas());
+                p.goalText(), p.collected(), p.focusAreas(), p.focusLabels());
         saveStudyMaterials(sub, p.materials());
+        saveCustomFocusLabels(sub, p.focusLabels());
         pendingGoalProposalStore.remove(proposalId);
         return sub;
     }
@@ -508,8 +535,9 @@ public class ChatAppService {
                                        ChatListener listener) {
         GoalProposal p = sp.proposal();
         SubSession sub = goalAppService.createGoal(userId, p.scenarioType(), p.title(),
-                p.goalText(), p.collected(), p.focusAreas());
+                p.goalText(), p.collected(), p.focusAreas(), p.focusLabels());
         saveStudyMaterials(sub, p.materials());
+        saveCustomFocusLabels(sub, p.focusLabels());
         pendingGoalProposalStore.remove(sp.id());
         String announce = "好的，已为你创建「" + p.title() + "」专属计划（子对话 #" + sub.getId()
                 + "）。我会在这个专属会话里帮你跟进报考、复习和考试节点。";

@@ -7,6 +7,7 @@ import com.butler.domain.repository.*;
 import com.butler.domain.scenario.ScenarioDomain;
 import com.butler.domain.scenario.ScenarioRegistry;
 import com.butler.infrastructure.llm.LlmPort;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -26,6 +27,7 @@ public class GoalAppService {
     private final LlmPort llmPort;
     private final UserMemoryRepository userMemoryRepository;
     private final MemorySessionRelRepository relRepository;
+    private final ObjectMapper objectMapper;
 
     public GoalAppService(MissionRepository missionRepository,
                           SubSessionRepository subSessionRepository,
@@ -34,7 +36,8 @@ public class GoalAppService {
                           ScenarioRegistry scenarioRegistry,
                           LlmPort llmPort,
                           UserMemoryRepository userMemoryRepository,
-                          MemorySessionRelRepository relRepository) {
+                          MemorySessionRelRepository relRepository,
+                          ObjectMapper objectMapper) {
         this.missionRepository = missionRepository;
         this.subSessionRepository = subSessionRepository;
         this.taskRepository = taskRepository;
@@ -43,6 +46,7 @@ public class GoalAppService {
         this.llmPort = llmPort;
         this.userMemoryRepository = userMemoryRepository;
         this.relRepository = relRepository;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional
@@ -59,13 +63,20 @@ public class GoalAppService {
     @Transactional
     public SubSession createGoal(Long userId, String scenarioType, String title, String goal,
                                  Map<String, String> collected, List<String> focusAreas) {
+        return createGoal(userId, scenarioType, title, goal, collected, focusAreas, Map.of());
+    }
+
+    @Transactional
+    public SubSession createGoal(Long userId, String scenarioType, String title, String goal,
+                                 Map<String, String> collected, List<String> focusAreas,
+                                 Map<String, String> focusLabels) {
         ScenarioDomain domain = scenarioRegistry.get(scenarioType);
         ensureMainSession(userId);
 
         LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"));
         collected = domain.normalizeCollected(goal, collected, today);
         List<String> selectedFocus = resolveFocusAreas(domain, focusAreas);
-        String enrichedGoal = enrichGoal(goal, domain, collected, selectedFocus);
+        String enrichedGoal = enrichGoal(goal, domain, collected, selectedFocus, focusLabels);
         Mission mission = missionRepository.save(
                 new Mission(null, userId, title == null || title.isBlank() ? goal : title, scenarioType, Instant.now()));
 
@@ -77,6 +88,15 @@ public class GoalAppService {
                 null, userId, mission.getId(), scenarioType, sessionDesc,
                 buildCollectedInfo(domain, collected, selectedFocus),
                 SubSessionStatus.ACTIVE, Instant.now()));
+
+        if (result.metricDefs() != null && !result.metricDefs().isEmpty()) {
+            try {
+                sub.setMetricDefs(objectMapper.writeValueAsString(result.metricDefs().stream()
+                        .map(d -> new MetricAppService.Def(d.key(), d.label(), d.unit(), d.chartType()))
+                        .toList()));
+                sub = subSessionRepository.save(sub);
+            } catch (Exception ignored) {}
+        }
 
         List<ScenarioDomain.PlannedTask> planned = domain.plannedTasks(collected, selectedFocus, today);
         if (!planned.isEmpty()) {
@@ -91,7 +111,12 @@ public class GoalAppService {
                     : result.tasks();
             for (LlmPort.TaskItem t : tasks) {
                 LocalDate due = Task.parseDueDate(t.dueDate());
-                taskRepository.save(Task.createScheduled(sub.getId(), t.content(), t.focusArea(), due));
+                java.time.LocalTime remindTime = Task.parseRemindTime(t.remindTime());
+                String recurrence = t.recurrence() == null ? "" : t.recurrence().trim();
+                taskRepository.save(Task.createDynamic(sub.getId(), t.content(),
+                        t.detail() == null ? "" : t.detail(), t.focusArea(), due,
+                        recurrence.isBlank() ? null : recurrence, remindTime,
+                        t.aiBrief() == null ? "" : t.aiBrief().trim()));
             }
         }
         persistCollectedAsMemories(domain, sub, userId, collected);
@@ -153,7 +178,7 @@ public class GoalAppService {
     }
 
     private String enrichGoal(String goal, ScenarioDomain domain, Map<String, String> collected,
-                              List<String> selectedFocus) {
+                              List<String> selectedFocus, Map<String, String> focusLabels) {
         StringBuilder sb = new StringBuilder(goal == null ? "" : goal);
         if (collected != null) {
             for (ScenarioDomain.CollectField f : domain.collectFields()) {
@@ -176,6 +201,15 @@ public class GoalAppService {
             sb.append("\n可用关注项 key 列表（生成任务时请把每项任务归类到最匹配的关注项 key）：");
             for (ScenarioDomain.FocusArea f : domain.focusAreas()) {
                 sb.append("\n- ").append(f.key()).append("=").append(f.label());
+            }
+            if (focusLabels != null) {
+                for (String key : selectedFocus) {
+                    String label = focusLabels.get(key);
+                    if (label != null && !label.isBlank()
+                            && domain.focusAreas().stream().noneMatch(f -> f.key().equals(key))) {
+                        sb.append("\n- ").append(key).append("=").append(label);
+                    }
+                }
             }
             sb.append("\n请围绕上述重点关注项生成可执行的初始待办，为每项推断明确的到期日并标注所属关注项 key。");
         }

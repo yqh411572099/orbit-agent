@@ -127,6 +127,7 @@
   </div>
   <div id="locBanner" style="display:none;align-items:center;gap:8px;padding:6px 12px;font-size:12px;background:#eef4ff;border-bottom:1px solid #d6e4ff;color:#3556a0;"></div>
   <div id="materialsBar" style="display:none;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 16px;font-size:12px;background:#fafbff;border-bottom:1px solid #e6e8ec;"></div>
+  <div id="metricsBar" style="display:none;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 16px;font-size:12px;background:#f6fbf7;border-bottom:1px solid #e2efe6;"></div>
   <div class="messages" id="messages"></div>
   <div class="input-bar">
     <input id="input" name="msg" autocomplete="off" autocapitalize="off" placeholder="输入消息，Enter 发送..." onkeydown="if(event.key==='Enter')send()">
@@ -697,8 +698,103 @@ function applySubData(d) {
   if (current.type === 'sub' && current.subSessionId) {
     updatePregnancyHeader(current.subSessionId);
     loadMaterials(current.subSessionId);
+    renderMetrics(d.metrics);
+  } else {
+    renderMetrics(null);
   }
 }
+
+// ===== 指标卡 + 图表（指标定义/图表类型由后端模型决定，前端只负责渲染）=====
+function renderMetrics(metrics) {
+  const bar = document.getElementById('metricsBar');
+  if (!metrics || !metrics.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  bar.innerHTML = metrics.map(m => {
+    const val = (m.value === null || m.value === undefined) ? '—' : m.value;
+    const unit = m.unit ? escapeHtml(m.unit) : '';
+    const label = escapeHtml(m.label || m.key);
+    return `<span onclick="openChart('${encodeURIComponent(m.key)}','${encodeURIComponent(label)}')" title="点击查看趋势图"
+      style="cursor:pointer;background:#fff;border:1px solid #bfe3c8;color:#1f7a3d;border-radius:14px;padding:4px 12px;font-weight:600;">📊 ${label} <b style="color:#0f5c28;">${val}${unit}</b> <span style="color:#9aa0ab;font-weight:400;">↗</span></span>`;
+  }).join('');
+  bar.style.display = 'flex';
+}
+
+async function openChart(encKey, encLabel) {
+  const key = decodeURIComponent(encKey);
+  const label = decodeURIComponent(encLabel);
+  document.getElementById('chartTitle').textContent = label + ' · 趋势';
+  document.getElementById('chartBody').innerHTML = '';
+  document.getElementById('chartEmpty').style.display = 'none';
+  document.getElementById('chartModalBg').style.display = 'flex';
+  try {
+    const d = await (await fetch(`/api/sub-sessions/${current.subSessionId}/metrics/${encodeURIComponent(key)}`)).json();
+    const pts = d.points || [];
+    if (pts.length < 1) { document.getElementById('chartEmpty').style.display = 'block'; return; }
+    document.getElementById('chartTitle').textContent = `${d.label || label}（单位：${d.unit || ''}）· ${chartName(d.chartType)}`;
+    document.getElementById('chartBody').innerHTML = renderChart(pts, d.chartType || 'line', d.unit || '');
+  } catch (e) {
+    document.getElementById('chartEmpty').style.display = 'block';
+  }
+}
+
+function chartName(t) { return t === 'bar' ? '柱状图' : t === 'pie' ? '占比图' : '折线图'; }
+
+function renderChart(pts, type, unit) {
+  const W = 520, H = 260, pad = 42;
+  const vals = pts.map(p => Number(p.value));
+  const labels = pts.map(p => (p.date || '').slice(5));
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const span = (max - min) || 1;
+  const lo = type === 'pie' ? 0 : min - span * 0.15;
+  const hi = type === 'pie' ? max : max + span * 0.15;
+  const x = i => pts.length === 1 ? W / 2 : pad + i * (W - pad * 2) / (pts.length - 1);
+  const y = v => H - pad - (v - lo) / ((hi - lo) || 1) * (H - pad * 2);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="background:#fff;">`;
+  // grid
+  for (let g = 0; g <= 4; g++) {
+    const gy = pad + g * (H - pad * 2) / 4;
+    svg += `<line x1="${pad}" y1="${gy}" x2="${W - pad}" y2="${gy}" stroke="#eef0f3" stroke-width="1"/>`;
+  }
+  if (type === 'bar') {
+    const bw = Math.max(8, (W - pad * 2) / pts.length * 0.5);
+    pts.forEach((p, i) => {
+      const v = Number(p.value);
+      svg += `<rect x="${x(i) - bw / 2}" y="${y(v)}" width="${bw}" height="${H - pad - y(v)}" rx="3" fill="#5aa36f"/>`;
+      svg += `<text x="${x(i)}" y="${y(v) - 6}" text-anchor="middle" font-size="10" fill="#2b3445">${v}</text>`;
+      svg += `<text x="${x(i)}" y="${H - pad + 16}" text-anchor="middle" font-size="9" fill="#8a909b">${labels[i]}</text>`;
+    });
+  } else if (type === 'pie') {
+    const cx = W / 2, cy = H / 2, r = Math.min(W, H) / 2 - pad;
+    let acc = 0; const total = vals.reduce((a, b) => a + b, 0) || 1;
+    const colors = ['#5aa36f','#3b6ef5','#f5a623','#e05b5b','#9b6df5','#2bb3c0'];
+    pts.forEach((p, i) => {
+      const frac = Number(p.value) / total;
+      const a0 = acc * Math.PI * 2 - Math.PI / 2, a1 = (acc + frac) * Math.PI * 2 - Math.PI / 2;
+      acc += frac;
+      const large = (a1 - a0) > Math.PI ? 1 : 0;
+      svg += `<path d="M${cx},${cy} L${cx + r * Math.cos(a0)},${cy + r * Math.sin(a0)} A${r},${r} 0 ${large} 1 ${cx + r * Math.cos(a1)},${cy + r * Math.sin(a1)} Z" fill="${colors[i % colors.length]}"/>`;
+      const am = (a0 + a1) / 2;
+      svg += `<text x="${cx + r * 0.6 * Math.cos(am)}" y="${cy + r * 0.6 * Math.sin(am)}" text-anchor="middle" font-size="10" fill="#fff">${Math.round(frac * 100)}%</text>`;
+      svg += `<rect x="${pad + (i % 3) * 150}" y="${H - 12}" width="10" height="10" fill="${colors[i % colors.length]}"/>`;
+      svg += `<text x="${pad + (i % 3) * 150 + 14}" y="${H - 3}" font-size="10" fill="#3a4252">${labels[i]||('项'+(i+1))}: ${p.value}${unit}</text>`;
+    });
+  } else {
+    // line
+    let path = '', dots = '';
+    pts.forEach((p, i) => {
+      const px = x(i), py = y(Number(p.value));
+      path += (i === 0 ? 'M' : 'L') + px + ',' + py + ' ';
+      dots += `<circle cx="${px}" cy="${py}" r="3.5" fill="#3b6ef5"/>`;
+      dots += `<text x="${px}" y="${py - 8}" text-anchor="middle" font-size="10" fill="#2b3445">${p.value}</text>`;
+      dots += `<text x="${px}" y="${H - pad + 16}" text-anchor="middle" font-size="9" fill="#8a909b">${labels[i]}</text>`;
+    });
+    svg += `<path d="${path}" fill="none" stroke="#3b6ef5" stroke-width="2"/>` + dots;
+  }
+  svg += '</svg>';
+  return svg;
+}
+
+function closeChart(e) { if (e.target.id === 'chartModalBg') document.getElementById('chartModalBg').style.display = 'none'; }
+
 
 function applyPending(d) {
   const el = document.getElementById('messages');
@@ -1433,6 +1529,12 @@ function showProposal(p) {
   }
   sections.push(proposalSection('待新建待办', '✨', planned));
 
+  // 可视化指标卡/数据点
+  const metricSec = [];
+  (p.metricCards || []).forEach(m => metricSec.push(`<div>📊 <b>${escapeHtml(m)}</b></div>`));
+  (p.metricPoints || []).forEach(m => metricSec.push(`<div>· 记录数据点：${escapeHtml(m)}</div>`));
+  if (metricSec.length) sections.push(proposalSection('数据卡片', '📈', metricSec));
+
   body.innerHTML = sections.join('');
   body.dataset.proposalId = p.proposalId;
   body.dataset.subId = subId;
@@ -1640,5 +1742,16 @@ renderAccount();
 bootstrap();
 
 </script>
+
+<div id="chartModalBg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:999;align-items:center;justify-content:center;" onclick="closeChart(event)">
+  <div style="background:#fff;border-radius:14px;padding:18px 20px;width:560px;max-width:92vw;box-shadow:0 12px 40px rgba(0,0,0,.2);" onclick="event.stopPropagation()">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <b id="chartTitle" style="color:#2b3445;font-size:15px;">指标趋势</b>
+      <span style="cursor:pointer;color:#8a909b;font-size:18px;" onclick="document.getElementById('chartModalBg').style.display='none';">✕</span>
+    </div>
+    <div id="chartBody"></div>
+    <div id="chartEmpty" style="display:none;color:#8a909b;text-align:center;padding:24px 0;">暂无数据，开始记录后这里会出图。</div>
+  </div>
+</div>
 </body>
 </html>

@@ -33,6 +33,7 @@ public class TaskRepositoryAdapter implements TaskRepository {
         po.setMilestoneKey(t.getMilestoneKey());
         po.setRecurrence(t.getRecurrence());
         po.setNextHint(t.getNextHint());
+        po.setAiBrief(t.getAiBrief());
         po.setCompleted(t.isCompleted());
         po.setRemindAt(t.getRemindAt());
         po.setDueDate(t.getDueDate());
@@ -107,6 +108,6 @@ public class TaskRepositoryAdapter implements TaskRepository {
     private Task toDomain(TaskPO po) {
         return new Task(po.getId(), po.getSubSessionId(), po.getContent(), po.getDetail(), po.getNextHint(),
                 po.getModuleKey(), po.getMilestoneKey(), po.getRecurrence(), po.getFocusArea(),
-                po.isCompleted(), po.getRemindAt(), po.getDueDate(), po.isReminded());
+                po.isCompleted(), po.getRemindAt(), po.getDueDate(), po.isReminded(), po.getAiBrief());
     }
 }
