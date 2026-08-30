@@ -35,8 +35,10 @@ public class WebSearchTool implements AgentTool {
 
     @Override
     public String description() {
-        return "联网搜索最新信息（政策、补贴、办事流程、新闻、机构动态等），返回带来源链接的结构化结果。"
-                + "适用于需要实时/开放网络信息的问题；地址、周边地点等现实世界位置问题请用 GeoService。";
+        return "从开放互联网检索信息，返回带来源链接的结构化结果。"
+                + "当回答依赖模型之外的信息——会随时间变化、需要准确来源、或你无法仅凭已有知识确定——时使用；"
+                + "用户明确要求联网/搜索/核实，或答案需要外部依据时也应使用。"
+                + "确定性的现实世界位置、周边地点、路线等问题用 GeoSearch（地图/地理检索）；已沉淀的内部知识用 KnowledgeBase。";
     }
 
     @Override

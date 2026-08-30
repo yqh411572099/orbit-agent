@@ -16,14 +16,16 @@ public class MainSessionRepositoryAdapter implements MainSessionRepository {
     @Override
     public Optional<MainSession> findByUserId(Long userId) {
         return jpa.findByUserId(userId).map(po -> new MainSession(po.getId(), po.getUserId(), po.getCreatedAt(),
-                po.getCity(), po.getLatitude(), po.getLongitude()));
+                po.getCity(), po.getLatitude(), po.getLongitude(),
+                com.butler.domain.model.InfoSourceMode.from(po.getInfoSourceMode())));
     }
 
     @Override
     public List<MainSession> findAll() {
         return jpa.findAll().stream()
                 .map(po -> new MainSession(po.getId(), po.getUserId(), po.getCreatedAt(),
-                        po.getCity(), po.getLatitude(), po.getLongitude()))
+                        po.getCity(), po.getLatitude(), po.getLongitude(),
+                        com.butler.domain.model.InfoSourceMode.from(po.getInfoSourceMode())))
                 .toList();
     }
 
@@ -36,8 +38,10 @@ public class MainSessionRepositoryAdapter implements MainSessionRepository {
         po.setCity(session.getCity());
         po.setLatitude(session.getLatitude());
         po.setLongitude(session.getLongitude());
+        po.setInfoSourceMode(session.getInfoSourceMode().name());
         MainSessionPO saved = jpa.save(po);
         return new MainSession(saved.getId(), saved.getUserId(), saved.getCreatedAt(),
-                saved.getCity(), saved.getLatitude(), saved.getLongitude());
+                saved.getCity(), saved.getLatitude(), saved.getLongitude(),
+                com.butler.domain.model.InfoSourceMode.from(saved.getInfoSourceMode()));
     }
 }

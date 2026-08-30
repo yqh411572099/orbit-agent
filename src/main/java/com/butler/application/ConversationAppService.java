@@ -76,15 +76,20 @@ public class ConversationAppService {
 
     /** 独立事务保存一条聊天记录，即使后续业务处理异常也不回滚。 */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void saveMessage(Long userId, SessionType sessionType, Long subSessionId, String role, String content) {
-        saveMessage(userId, sessionType, subSessionId, role, content, null);
+    public RawChatLog saveMessage(Long userId, SessionType sessionType, Long subSessionId, String role, String content) {
+        return saveMessage(userId, sessionType, subSessionId, role, content, null);
+    }
+
+    /** 把本轮变更提案挂到触发它的助手消息上，供对话内只读变更溯源卡使用。 */
+    public void attachProposalToMessage(String proposalId, Long messageId) {
+        pendingProposalStore.attachMessage(proposalId, messageId);
     }
 
     /** 独立事务保存一条聊天记录（可带思考过程），即使后续业务处理异常也不回滚。 */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void saveMessage(Long userId, SessionType sessionType, Long subSessionId,
-                            String role, String content, String reasoning) {
-        rawChatLogRepository.save(new RawChatLog(
+    public RawChatLog saveMessage(Long userId, SessionType sessionType, Long subSessionId,
+                                  String role, String content, String reasoning) {
+        return rawChatLogRepository.save(new RawChatLog(
                 null, userId, sessionType, subSessionId, role, content, reasoning, Instant.now()));
     }
 
@@ -179,6 +184,15 @@ public class ConversationAppService {
 
     /** 仅解析用户输入将引发的变更，生成预览并暂存，不落库（修改前弹窗确认用）。 */
     public ChangePreview proposeSubSessionChange(Long subSessionId, String newMessage) {
+        return proposeSubSessionChange(subSessionId, newMessage, null, null);
+    }
+
+    /**
+     * 解析变更并生成预览。
+     * @param assistantReply 本轮助手已给出的最终回答（若有）：结构化数值抽取以此结论为准，保证与正文一致。
+     */
+    public ChangePreview proposeSubSessionChange(Long subSessionId, String newMessage, String assistantReply,
+                                                 LlmPort.Grounding grounding) {
         SubSession sub = subSessionRepository.findById(subSessionId).orElse(null);
         if (sub == null || sub.getStatus() == SubSessionStatus.ARCHIVED) return null;
         if (!scenarioRegistry.supports(sub.getScenarioType())) return null;
@@ -191,7 +205,7 @@ public class ConversationAppService {
         List<ScenarioDomain.ScenarioIntent> intents = domain.interpret(
                 newMessage, state.collected(), state.focusAreas(),
                 (hints, message) -> {
-                    LlmPort.ScenarioEvent ev = extractEvent(domain, state, existingCustomLabels, message);
+                    LlmPort.ScenarioEvent ev = extractEvent(domain, state, existingCustomLabels, message, subSessionId, assistantReply, grounding);
                     llmEventHolder.set(ev);
                     return new ScenarioDomain.DomainEvent(ev.fieldUpdates(), ev.completedKeywords(),
                             ev.enableFocusAreas(), ev.disableFocusAreas(), ev.note(), ev.affectsTasks());
@@ -324,15 +338,18 @@ public class ConversationAppService {
                 event.memoryUpserts() == null ? List.of() : event.memoryUpserts(), completed,
                 plannedDynamic,
                 llmEvent == null || llmEvent.metricDefs() == null ? List.of() : llmEvent.metricDefs(),
-                llmEvent == null || llmEvent.metricPoints() == null ? List.of() : llmEvent.metricPoints());
+                llmEvent == null || llmEvent.metricPoints() == null ? List.of() : llmEvent.metricPoints(),
+                llmEvent == null || llmEvent.metricRemove() == null ? List.of() : llmEvent.metricRemove());
 
         List<String> metricCards = llmEvent == null || llmEvent.metricDefs() == null ? List.of()
                 : llmEvent.metricDefs().stream().map(d -> d.label() + "（" + (d.unit() == null ? "" : d.unit()) + "·" + d.chartType() + "图）").toList();
         List<String> metricPoints = llmEvent == null || llmEvent.metricPoints() == null ? List.of()
-                : llmEvent.metricPoints().stream().map(d -> d.value() + (d.date() == null || d.date().isBlank() ? "" : "(" + d.date() + ")")).toList();
+                : resolveMetricPointLabels(subSessionId, llmEvent.metricPoints());
+        List<String> metricRemoved = llmEvent == null || llmEvent.metricRemove() == null ? List.of()
+                : resolveMetricLabels(subSessionId, llmEvent.metricRemove());
         ChangePreview preview = new ChangePreview(stored.id(), fieldChanges, focusAdded, focusRemoved,
                 tasksAdded, tasksUpdated, tasksRemoved, tasksCompleted, tasksPlanned,
-                memories, event.note(), metricCards, metricPoints);
+                memories, event.note(), metricCards, metricPoints, metricRemoved);
         try {
             pendingProposalStore.attachPreview(stored.id(), objectMapper.writeValueAsString(preview));
         } catch (Exception ignored) {}
@@ -472,18 +489,42 @@ public class ConversationAppService {
     private LlmPort.ScenarioEvent extractEvent(ScenarioDomain domain,
                                                ScenarioStateSupport.ScenarioState state,
                                                Map<String, String> customLabels,
-                                               String newMessage) {
+                                               String newMessage, Long subSessionId, String assistantReply,
+                                               LlmPort.Grounding grounding) {
         try {
             List<String> hints = new ArrayList<>(domain.keyFieldHints());
             for (ScenarioDomain.FocusArea focusArea : domain.focusAreas()) {
                 hints.add(focusArea.key() + "(关注项:" + focusArea.label() + ")");
             }
-            return llmPort.extractScenarioEvent(domain.type(), hints,
-                    ScenarioStateSupport.render(domain, state.collected(), state.focusAreas(), customLabels), newMessage);
+            return llmPort.extractScenarioEvent(domain.type(), hints, domain.eventRuleHints(),
+                    ScenarioStateSupport.render(domain, state.collected(), state.focusAreas(), customLabels), newMessage,
+                    buildExistingMetrics(subSessionId), assistantReply, groundingText(grounding));
         } catch (Exception e) {
             log.warn("场景事件提取失败 sub scenario={} err={}", domain.type(), e.getMessage());
             return new LlmPort.ScenarioEvent(Map.of(), List.of(), List.of(), List.of(), "");
         }
+    }
+
+    /** 把感知层锚定结果渲染成给事件提取器的权威时间归属说明。 */
+    private String groundingText(LlmPort.Grounding g) {
+        if (g == null) return "";
+        StringBuilder sb = new StringBuilder();
+        if (g.anchorTimeText() != null && !g.anchorTimeText().isBlank())
+            sb.append("时间锚点：").append(g.anchorTimeText()).append("\n");
+        if (g.isRetrospective()) sb.append("本轮以回顾/询问过去为主，通常不应为今天新增数据记录。\n");
+        if (g.events() != null && !g.events().isEmpty()) {
+            sb.append("本轮事件（每个事件归属其实际发生的自然日；只有 isNew=true 才是要新落库的记录）：\n");
+            for (LlmPort.GroundedEvent e : g.events()) {
+                sb.append("- ").append(e.isNew() ? "[新事件]" : "[仅回顾]")
+                  .append(" date=").append(e.date() == null || e.date().isBlank() ? "未定" : e.date())
+                  .append(e.period() == null || e.period().isBlank() ? "" : " " + e.period())
+                  .append(" kind=").append(e.kind() == null ? "" : e.kind())
+                  .append("：").append(e.summary() == null ? "" : e.summary()).append("\n");
+            }
+            sb.append("写 metricPoints 时，date 必须取该事件实际发生的 date；仅回顾事件不要写数据点；")
+              .append("不同自然日的事件分别写各自 date，绝不能并入今天。\n");
+        }
+        return sb.toString();
     }
 
     private Map<String, String> sanitizeUpdates(ScenarioDomain domain, Map<String, String> updates) {
@@ -597,6 +638,67 @@ public class ConversationAppService {
         }
     }
 
+    /** 已有指标卡清单（key=名称），供模型判断删除/合并图表时引用。 */
+    private String buildExistingMetrics(Long subSessionId) {
+        try {
+            List<MetricAppService.Def> defs = metricAppService.getDefs(subSessionId);
+            if (defs == null || defs.isEmpty()) return "（暂无）";
+            return defs.stream()
+                    .map(d -> d.key() + "=" + d.label()
+                            + "（序列 key: " + d.series().stream()
+                                .map(s2 -> s2.key() + "=" + s2.label())
+                                .reduce((a, b) -> a + "、" + b).orElse(d.key() + "=" + d.label()) + "）")
+                    .reduce((a, b) -> a + "；" + b).orElse("（暂无）");
+        } catch (Exception e) {
+            return "（暂无）";
+        }
+    }
+
+    /** 把模型返回的待删卡片 key 转成中文标签，用于确认弹窗展示。 */
+    /** 数据点预览文案：序列中文名：值 单位（日期）。多序列时也能看清每条记录对应哪条线。 */
+    private List<String> resolveMetricPointLabels(Long subSessionId, List<LlmPort.MetricPointIn> points) {
+        Map<String, String> labelBySeries = new java.util.LinkedHashMap<>();
+        Map<String, String> unitBySeries = new java.util.HashMap<>();
+        for (MetricAppService.Def d : metricAppService.getDefs(subSessionId)) {
+            String unit = d.unit() == null ? "" : d.unit();
+            for (MetricAppService.Series s : d.series()) {
+                labelBySeries.put(s.key(), s.label());
+                unitBySeries.put(s.key(), unit);
+            }
+        }
+        List<String> out = new ArrayList<>();
+        LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"));
+        for (LlmPort.MetricPointIn pt : points) {
+            if (pt == null || pt.key() == null || pt.key().isBlank()) continue;
+            String key = pt.key().trim();
+            String label = labelBySeries.getOrDefault(key, key);
+            String unit = unitBySeries.getOrDefault(key, "");
+            String date = pt.date() == null || pt.date().isBlank() ? "" : "（" + pt.date().trim() + "）";
+            // 同日同序列已有值且数值相同 → 不算变更，跳过（避免“值没改也弹窗”）。
+            Double old = metricAppService.existingValue(subSessionId, key, pt.date(), today);
+            String newVal = String.valueOf(pt.value());
+            if (old != null && Math.abs(old - pt.value()) < 1e-6) {
+                continue;
+            }
+            String change = old == null
+                    ? (newVal + (unit.isBlank() ? "" : " " + unit))
+                    : (old + (unit.isBlank() ? "" : " " + unit) + " → " + newVal + (unit.isBlank() ? "" : " " + unit));
+            out.add(label + "：" + change + date);
+        }
+        return out;
+    }
+
+    private List<String> resolveMetricLabels(Long subSessionId, List<String> keys) {
+        Map<String, String> labelByKey = new java.util.HashMap<>();
+        for (MetricAppService.Def d : metricAppService.getDefs(subSessionId)) labelByKey.put(d.key(), d.label());
+        List<String> out = new ArrayList<>();
+        for (String k : keys) {
+            if (k == null || k.isBlank()) continue;
+            out.add(labelByKey.getOrDefault(k.trim(), k.trim()));
+        }
+        return out;
+    }
+
     /** 确认变更后：合并指标卡定义并写入本次汇报的数据点（如“今日体重 78.5kg”）。 */
     private void applyMetrics(SubSession sub, PendingProposalStore.StoredProposal p) {
         try {
@@ -605,6 +707,9 @@ public class ConversationAppService {
             }
             if (p.metricPoints() != null && !p.metricPoints().isEmpty()) {
                 metricAppService.addPoints(sub.getId(), sub.getUserId(), p.metricPoints());
+            }
+            if (p.metricRemove() != null && !p.metricRemove().isEmpty()) {
+                metricAppService.removeDefs(sub.getId(), p.metricRemove());
             }
         } catch (Exception e) {
             log.warn("应用指标卡数据失败 sub={} err={}", sub.getId(), e.getMessage());
@@ -620,10 +725,12 @@ public class ConversationAppService {
         return objectMapper.convertValue(base, Attribute.class);
     }
 
-    private String buildFocusContext(ScenarioDomain domain, List<String> effectiveFocus) {
+    private String buildFocusContext(ScenarioDomain domain, List<String> effectiveFocus,
+                                     Map<String, String> customLabels) {
         if (domain == null || effectiveFocus == null || effectiveFocus.isEmpty()) return "";
         Map<String, String> labelByKey = new LinkedHashMap<>();
         for (ScenarioDomain.FocusArea f : domain.focusAreas()) labelByKey.put(f.key(), f.label());
+        if (customLabels != null) labelByKey.putAll(customLabels);
         List<String> parts = new ArrayList<>();
         for (String key : effectiveFocus) {
             String label = labelByKey.get(key);
@@ -658,7 +765,8 @@ public class ConversationAppService {
                         t.getAiBrief() == null ? "" : t.getAiBrief()))
                 .toList();
         String collected = sub.getCollectedInfo() == null ? "" : sub.getCollectedInfo();
-        String focusContext = buildFocusContext(domain, effectiveFocus);
+        Map<String, String> customLabels = CustomFocusLabels.read(sub);
+        String focusContext = buildFocusContext(domain, effectiveFocus, customLabels);
         String messageWithContext = newMessage
                 + (focusContext.isBlank() ? "" : "\n【可分配的关注项(key=名称)】\n" + focusContext)
                 + (collected.isBlank() ? "" : "\n【已收集信息】\n" + collected);
@@ -676,15 +784,40 @@ public class ConversationAppService {
                 .filter(t -> t.getModuleKey() == null).toList();
         for (Task task : dynamicTasks) taskRepository.delete(task);
         if (items == null) return;
+        SubSession sub = subSessionRepository.findById(subSessionId).orElse(null);
+        ScenarioDomain domain = sub != null && scenarioRegistry.supports(sub.getScenarioType())
+                ? scenarioRegistry.get(sub.getScenarioType()) : null;
+        Map<String, String> customLabels = sub == null ? Map.of() : CustomFocusLabels.read(sub);
         for (LlmPort.TaskItem item : items) {
             LocalDate due = Task.parseDueDate(item.dueDate());
             String recurrence = item.recurrence() == null ? "" : item.recurrence().trim();
             java.time.LocalTime remindTime = Task.parseRemindTime(item.remindTime());
+            String focusKey = resolveFocusKey(domain, customLabels, item.focusArea());
             taskRepository.save(Task.createDynamic(subSessionId, item.content(),
-                    item.detail() == null ? "" : item.detail(), item.focusArea(), due,
+                    item.detail() == null ? "" : item.detail(), focusKey, due,
                     recurrence.isBlank() ? null : recurrence, remindTime,
                     item.aiBrief() == null ? "" : item.aiBrief().trim()));
         }
+    }
+
+    /**
+     * 动态任务的 focusArea 只接受“已知 key”（内置关注项 key 或自定义关注项 key），关联一律用 key。
+     * 模型若返回中文名称或未知值，说明未对齐 key 清单：此处不做中文兜底、也不生造 key，直接归 null（通用分组），
+     * 避免任务上存中文 label 导致与关注项集合对不上。
+     */
+    private String resolveFocusKey(ScenarioDomain domain, Map<String, String> customLabels, String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String value = raw.trim();
+        java.util.Set<String> known = new java.util.HashSet<>();
+        if (domain != null) {
+            for (ScenarioDomain.FocusArea f : domain.focusAreas()) {
+                known.add(f.key());
+            }
+        }
+        if (customLabels != null) {
+            known.addAll(customLabels.keySet());
+        }
+        return known.contains(value) ? value : null;
     }
 
     private void markCompletedByKeywords(Long subSessionId, List<String> keywords) {

@@ -61,6 +61,14 @@ public class RawChatLogRepositoryAdapter implements RawChatLogRepository {
     }
 
     @Override
+    public int archiveAndDeleteSubSessionFromId(Long subSessionId, Long userId, Long fromId, String reason) {
+        List<RawChatLogPO> rows = jpa.findBySubSessionIdAndIdGreaterThanEqual(subSessionId, fromId);
+        archiveRecorder.archiveAll("raw_chat_log", rows, userId, subSessionId, reason);
+        jpa.deleteBySubSessionIdAndIdGreaterThanEqual(subSessionId, fromId);
+        return rows.size();
+    }
+
+    @Override
     public List<RawChatLog> findByUserIdAndCreatedAtBetween(Long userId, Instant from, Instant to) {
         return jpa.findByUserIdAndCreatedAtBetween(userId, from, to).stream()
                 .map(po -> new RawChatLog(po.getId(), po.getUserId(), SessionType.valueOf(po.getSessionType()),

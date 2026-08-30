@@ -22,6 +22,8 @@ public class SpringAiLlmAdapter implements LlmPort {
     private static final Logger log = LoggerFactory.getLogger(SpringAiLlmAdapter.class);
     private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
     private final ChatClient chatClient;
+    /** 轻量级模型入口：锚定/意图判定/分类等结构化轻任务走它；未配置则回退主模型。 */
+    private final ChatClient lightChatClient;
     private final ObjectMapper mapper;
     private final String apiKey;
     private final String baseUrl;
@@ -30,12 +32,21 @@ public class SpringAiLlmAdapter implements LlmPort {
             .connectTimeout(java.time.Duration.ofSeconds(10)).build();
 
     public SpringAiLlmAdapter(ChatClient.Builder builder, ObjectMapper mapper) {
-        this(builder, mapper, "", "", "");
+        this(builder, mapper, "", "", "", "");
     }
 
     public SpringAiLlmAdapter(ChatClient.Builder builder, ObjectMapper mapper,
                               String apiKey, String baseUrl, String model) {
+        this(builder, mapper, apiKey, baseUrl, model, "");
+    }
+
+    public SpringAiLlmAdapter(ChatClient.Builder builder, ObjectMapper mapper,
+                              String apiKey, String baseUrl, String model, String lightModel) {
         this.chatClient = builder.build();
+        this.lightChatClient = (lightModel == null || lightModel.isBlank())
+                ? this.chatClient
+                : builder.defaultOptions(org.springframework.ai.openai.OpenAiChatOptions.builder()
+                        .withModel(lightModel.trim()).build()).build();
         this.mapper = mapper;
         this.apiKey = apiKey == null ? "" : apiKey;
         this.baseUrl = (baseUrl == null || baseUrl.isBlank())
@@ -56,9 +67,9 @@ public class SpringAiLlmAdapter implements LlmPort {
                 需要则用一句话写清要生成什么、参考什么近况（如“结合用户近几日饮食记录和减重目标，给出今日三餐建议，避免与近期重复”）；一次性里程碑、纯提醒、无需变化的待办 aiBrief 留空字符串。
                 严格只输出一个JSON对象，不要任何解释、前后缀或代码块标记。
                 格式：{"sessionDesc":"...","tasks":[{"content":"...","dueDate":"2026-08-07","focusArea":"prenatal_checkup","aiBrief":""},{"content":"每日饮食建议","dueDate":"2026-08-25","focusArea":"diet","recurrence":"daily","remindTime":"08:00","aiBrief":"结合近几日饮食记录给今日三餐建议"}]}
-                metricDefs：如果这个目标有“需要长期追踪、适合在子对话里展示数值卡+趋势图”的可量化指标（如减重的体重/体脂率、考证的模考分数、学习时长），给出指标定义数组：
-                key=小写下划线标识，label=中文名，unit=单位，chartType=趋势用 line、占比用 pie、离散对比用 bar；没有则为空数组。
-                输出 JSON 追加字段："metricDefs":[{"key":"weight","label":"当前体重","unit":"kg","chartType":"line"}]
+                metricDefs：如果这个目标有“需要长期追踪、适合在子对话里展示数值卡+趋势图”的可量化指标（如减重的体重/体脂率、考证的模考分数、学习时长），给出卡片数组：
+                每张卡 key=小写下划线卡片标识，label=中文名，unit=单位，chartType=line/bar/pie，series=图内序列数组[{key,label}]（单指标给一条且 key 与卡片同名；一张图放多个相关指标时给多条，如热量消耗含静息/运动/总消耗）。
+                输出 JSON 追加字段："metricDefs":[{"key":"weight","label":"当前体重","unit":"kg","chartType":"line","series":[{"key":"weight","label":"当前体重"}]}]
                 """.formatted(scenarioType, userGoal, LocalDate.now(ZONE));
         Map<String, Object> m = callForObject(prompt);
         return new CreateGoalResult(str(m.get("sessionDesc")), toTaskItems(m.get("tasks")),
@@ -100,7 +111,7 @@ public class SpringAiLlmAdapter implements LlmPort {
                 - 日期格式 yyyy-MM-dd，今天是%tF；一次性任务日期不得早于今天；无法确定具体日期则 dueDate 留空。
                 - 对“每天/每日提醒X”这类周期性习惯，生成一条任务，dueDate 填今天（或下一个执行日），recurrence 填 daily；“每周”填 weekly，“每月”填 monthly，非周期留空。
                 - 对周期性任务，remindTime 必填，为 24 小时制的 HH:mm：把用户说的“早上8点/晚上9点半/饭后”等自然语言换算成 HH:mm（晚上8点半=20:30，早上7点=07:00）；用户未指定时刻则填 "09:00"。一次性任务 remindTime 留空。
-                - focusArea 为任务所属关注项 key（用户新增的关注项用其 key），无匹配留空。
+                - focusArea 只填“关注项 key”，必须从新信息中【可分配的关注项(key=名称)】清单里选等号左边的 key，严禁填中文名称；清单里没有匹配项就留空字符串。
                 - detail 可填一句执行要点/准备事项，没有留空。
                 - aiBrief：该待办到点需要结合近况动态生成本次内容（如每天给今日食谱/训练建议）时，用一句话写清生成什么；一次性里程碑、纯提醒留空字符串。已存在任务若原 aiBrief 仍适用请原样保留。
                 - 如果新信息改变了关键日期（如预产期/检查日期变更），相应重排相关任务；用户明确停止/不再做的事项从列表删除。
@@ -131,6 +142,8 @@ public class SpringAiLlmAdapter implements LlmPort {
                   若有价值但目录里没有完全匹配的类型，可自定义 type 并自由加字段（会被原样保留）。
                 对每条记忆判断与哪些活跃子会话相关（会影响该场景计划/安排/状态就算相关），返回索引(从0开始)；都不相关返回空数组。
                 过滤闲聊、临时问句、无长期价值内容；没有有效信息返回空数组。
+                【待确认信息不沉淀】对话里被标注为“待确认/待锁定/临时记录/等你确认”的数值或状态（如刚报但尚未确认的体重、目标、日期），
+                以及助手正文里“当前/已记录”之外的临时口径，都不是既成事实，不要提取为记忆；只有用户明确确认、或系统已锁定生效的信息才作为事实。
                 【记忆冲突处理】下面列出了用户当前已有的有效记忆（带编号）。如果本次对话提供了更新/更正/矛盾的信息，使其中某些旧记忆已经过时或错误，
                 请在 superseded_indexes 中返回这些旧记忆的编号；例如旧记忆说“预产期未确定”，本次确认了预产期，就把那条旧记忆编号列入。仅列出确实被取代的，不要列仍有效的。
                 当前已有记忆（带编号）：
@@ -232,7 +245,7 @@ public class SpringAiLlmAdapter implements LlmPort {
                 %s
                 用户最新消息：%s
                 """.formatted(catalog, conv.toString(), userMessage);
-        Map<String, Object> m = callForObject(prompt);
+        Map<String, Object> m = callForObject(prompt, true);
         @SuppressWarnings("unchecked")
         Map<String, String> collected = (Map<String, String>) m.getOrDefault("collected", Map.of());
         return new GoalIntent(
@@ -258,43 +271,49 @@ public class SpringAiLlmAdapter implements LlmPort {
                 - 补充、修改方案中的信息（如改考试时间、级别、城市），或提出新的要求 → modify，instruction 写明改动；
                 - 与确认方案无关的闲聊/提问 → unrelated。
                 """.formatted(proposalSummary == null ? "" : proposalSummary, userMessage);
-        Map<String, Object> m = callForObject(prompt);
+        Map<String, Object> m = callForObject(prompt, true);
         return new ProposalReply(str(m.get("action")), str(m.get("instruction")));
     }
 
     @Override
     public ScenarioEvent extractScenarioEvent(String scenarioType, List<String> keyFieldHints,
-                                             String collectedInfo, String newMessage) {
+                                             List<String> domainRuleHints,
+                                             String collectedInfo, String newMessage, String existingMetrics,
+                                             String assistantReply, String groundingText) {
         String fields = keyFieldHints == null ? "" : String.join("、", keyFieldHints);
+        String domainRules = (domainRuleHints == null || domainRuleHints.isEmpty())
+                ? "" : "\n本场景专属规则（优先遵守）：\n" + domainRuleHints.stream().map(h -> "- " + h).collect(java.util.stream.Collectors.joining("\n"));
+        if (existingMetrics == null || existingMetrics.isBlank()) existingMetrics = "（暂无）";
+        String msg = newMessage == null ? "" : newMessage;
+        String grounding = (groundingText == null || groundingText.isBlank())
+                ? "" : "\n【感知层上下文锚定（已消解时间/指代，时间归属以此为准）】\n" + groundingText + "\n";
+
+        // 模型自选能力：能力手册常驻，模型先在 capabilities 声明本轮用到的能力，只填对应字段（不做后端关键词路由）。
+        String replyBlock = (assistantReply == null || assistantReply.isBlank())
+                ? "（本轮无助手回答，请仅依据用户消息判断）"
+                : "助手本轮对用户的最终回答（其中已经算出的数值/结论是权威结果，结构化字段里的数值必须与此一致，不要另行估算）：\n"
+                  + assistantReply;
         String prompt = """
-                你是长期目标管家的“事件提取器”。根据用户最新消息，判断是否发生了需要调整目标计划的事件。
+                你是长期目标管家的“事件提取器”。根据用户最新消息和助手本轮回答，判断是否发生了需要沉淀到系统里的事件。
                 场景类型：%s
                 该场景的关键字段：%s
                 已知收集信息：%s
                 用户消息：%s
-                只输出 JSON，不要解释：
-                {"fieldUpdates":{"字段key":"新值"},"completedKeywords":["已完成事项关键词"],"enableFocusAreas":["新增关注项key"],"disableFocusAreas":["关闭关注项key"],"affectsTasks":true/false,"note":"一句话说明变更"}
-                规则：
-                - 关键日期变更（如预产期/考试日改到X、根据B超现在是N周）放入 fieldUpdates，日期用 yyyy-MM-dd；无法精确换算日期时也尽量给出日期，今天是%tF。
-                - 用户确定某里程碑节点的实际预约/执行日期时（如“NT约到8月20号”“8月7日做早孕B超”“建档定在X日”），把日期写入对应的 milestone_<节点key>_date 字段（关键字段列表里以“预约/实际执行日期”结尾的那些），不要写到预产期/孕周字段；日期用 yyyy-MM-dd，缺年份按今天所在年份判断。
-                - 严禁仅凭某检查的预约日期反推预产期或当前孕周（例如“NT约到8月20号”不等于“今天是12周”）；只有用户明确说“今天/现在孕N周”或“预产期改到X”时才更新 dueDate/currentWeek。
-                - 用户表示某项检查/任务已完成，把该事项关键词放入 completedKeywords。
-                - enableFocusAreas/disableFocusAreas 由你做语义判断，不要做关键词正则匹配：只有当用户明确表达“要新增/开启某个关注项、希望持续被提醒某类事项”时，才把对应关注项 key 放入 enableFocusAreas；只有当用户明确表达“不再关注/关闭某类提醒”时才放入 disableFocusAreas。
-                - 例：“给我建个关注项，每天提醒我抹妊娠油”应判定为新增“皮肤与身体护理”关注项；而“NT约到8月20号”“今天做了大排畸”只是日期/状态更新，不得新增关注项。
-                - 关键字段列表里以"(关注项:xxx)"标注的是该场景内置关注项，启用/关闭时直接用其 key。
-                - 用户要新增的关注项不在内置列表里时，enableFocusAreas 用 "custom_key|中文名称" 格式：custom_key 用小写英文蛇形命名（如 skin_care），中文名称即用户表述的关注项名（如 皮肤与身体护理）。内置项不要带名称后缀。
-                - 没有增删意图时两个数组都为空。
-                - affectsTasks（布尔）：只有当用户这句话确实在“新增/修改/删除/调整待办、提醒、关注项，或改动提醒时间/周期”时才为 true；纯咨询、提问、闲聊、查询政策/怎么办理、让你解释或推荐等都为 false。判断要保守，拿不准就 false。
-                - metricDefs：当用户希望在子对话里持续看到某个可量化指标卡/图表（如“右上角展示我的体重”“记录每天体重变化”“追踪我的模考分数”）时，给出该指标定义数组：
-                  key=小写下划线指标标识（weight/body_fat/mock_score…），label=中文名（当前体重/体脂率/模考分数），unit=单位（kg、百分号、分），
-                  chartType=适合的图表类型：随时间变化的单值趋势用 line（体重、分数），对比构成占比用 pie，少量离散对比用 bar；没有这类诉求返回空数组。
-                - metricPoints：用户这次明确汇报了可记录的数值（如“今天体重78.5公斤”“这次考了128分”）时，给出数据点数组：
-                  key=对应 metricDefs 的 key（未定义就用合适的新 key），value=数值（数字），date=该数据日期 yyyy-MM-dd（用户说“今天/没说日期”就用今天）。只是表达想记录的意愿而没给数值，不要编造，返回空数组。
-                  unit 与 value 保持一致：用户用什么单位报数（斤/kg/分…），指标定义的 unit 就用该单位、value 就填用户报的原始数值，不要自行换算单位。
-                - 没有任何变化时所有字段返回空（affectsTasks 为 false）。
-                输出 JSON 在原字段基础上追加："metricDefs":[{"key":"weight","label":"当前体重","unit":"kg","chartType":"line"}],"metricPoints":[{"key":"weight","value":78.5,"date":"2026-08-27"}]
-                """.formatted(scenarioType, fields, collectedInfo == null ? "" : collectedInfo, newMessage, LocalDate.now(ZONE));
+                %s
+                只输出 JSON，不要解释，JSON 结构如下（未选中的能力对应字段省略或给空）：
+                %s
+                %s
+                %s
+                已有指标卡（key=名称；删除/合并时据此引用 metricRemove）：%s
+                %s
+                今天是%tF。
+                """.formatted(scenarioType, fields, collectedInfo == null ? "" : collectedInfo, msg,
+                replyBlock,
+                grounding,
+                EventPromptKernel.JSON_SCHEMA, EventPromptKernel.MANUAL, domainRules, existingMetrics,
+                LocalDate.now(ZONE));
         Map<String, Object> m = callForObject(prompt);
+        log.debug("事件提取 capabilities={} scenario={}", m.get("capabilities"), scenarioType);
         java.util.Map<String, String> fieldUpdates = toStringMap(m.get("fieldUpdates"));
         return new ScenarioEvent(fieldUpdates,
                 toStrList(m.get("completedKeywords")),
@@ -303,17 +322,121 @@ public class SpringAiLlmAdapter implements LlmPort {
                 str(m.get("note")),
                 Boolean.TRUE.equals(m.get("affectsTasks")),
                 toMetricDefs(m.get("metricDefs")),
-                toMetricPoints(m.get("metricPoints")));
+                toMetricPoints(m.get("metricPoints")),
+                toStrList(m.get("metricRemove")));
     }
 
     private Map<String, Object> callForObject(String prompt) {
-        String content = chatClient.prompt().user(prompt).call().content();
+        return callForObject(prompt, false);
+    }
+
+    /**
+     * 结构化 JSON 调用。light=true 走轻量级模型入口（锚定/意图判定/分类等轻任务）；
+     * 未配置轻模型时 lightChatClient 即主模型，行为不变。
+     */
+    private Map<String, Object> callForObject(String prompt, boolean light) {
+        ChatClient client = light ? lightChatClient : chatClient;
+        String content = client.prompt().user(prompt).call().content();
         log.debug("LLM raw response: {}", content);
         String json = stripCodeFence(content);
         try {
             return mapper.readValue(json, new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             throw new IllegalStateException("LLM 返回非合法 JSON: " + content, e);
+        }
+    }
+
+    public Grounding groundContext(String userMessage, List<ChatMessage> recentMessages,
+                                   String situationText, String focusCatalogText,
+                                   List<ToolDef> tools, ToolExecutor toolExecutor) {
+        String dialog = recentMessages == null || recentMessages.isEmpty() ? "（暂无历史）"
+                : recentMessages.stream()
+                    .map(m -> ("user".equals(m.role()) ? "用户：" : "管家：") + m.content())
+                    .collect(java.util.stream.Collectors.joining("\n"));
+        String situation = (situationText == null || situationText.isBlank()) ? "（无）" : situationText;
+        String focus = (focusCatalogText == null || focusCatalogText.isBlank()) ? "（无）" : focusCatalogText;
+        String prompt = """
+                你是长期管家的“感知层上下文锚定器”。在回答和记账之前，先把用户这句话里的相对时间、指代、简称解析成绝对对象。
+                今天是 %1$tF（%1$tA，Asia/Shanghai）。
+                【用户最新一句】%2$s
+                【近期对话（供消解指代，不要把里面其他日期的事件当成本轮新事件）】
+                %3$s
+                【当前处境/已收集信息】%4$s
+                【本目标已注册关注项/待办语境】%5$s
+                任务：像人一样先搞清楚“这句话说的是哪件事、发生在哪一天/哪一餐、跟谁有关、指的是哪条待办或哪个指标”。
+                规则：
+                - 时间一律锚定到绝对自然日 yyyy-MM-dd：“今天/刚刚/今早/现在”→今天；“昨天/昨晚”→昨天；“前天”→前天；明确说的日期照用；无法确定日期的事件 date 留空，禁止一律填今天。
+                - 区分“本轮新发生、需要记账/处理的事件”与“只是在回顾、询问、提及过去”：前者 isNew=true，后者 isNew=false（例如“我昨天吃了火锅帮我算热量”是要把昨天那顿记到昨天；而“昨天那顿多少卡来着？”只是询问）。
+                  像“到春节能不能减到165斤”这类面向未来命名时间点的提问/规划，把该时间点也锚定：先调用工具查清它的确切日期再填 date，isNew=false。
+                - 一条数据/一顿饭/一次测量只归属它实际发生的那个自然日，绝不要把历史对话里其他日期的内容并入今天。
+                - period 填早餐/午餐/晚餐/加餐/上午/下午/晚上 等；subject 填 self/partner/baby 等；refObject 填指代落到的具体待办/关注项/指标/地点（无则空）。
+                - 拿不准的字段留空，绝不编造；这句话若纯属闲聊/提问、没有可锚定事件，events 返回空数组。
+                你可以调用工具来完成锚定，分两类：①需要外部信息才能确定的对象——例如节日/节气/考试季在今年的确切公历日期、某地点归属的区划街道、某地址的坐标——调用联网搜索/地图查实后再填，不要凭记忆猜测；②凡是计算（数字运算、日期推算、星期几、相差几天/几周等），优先去 Calculator 计算工具里找对应能力取得结果，工具确实不支持的再自行推算，不要默认心算。
+                只输出一个 JSON 对象（不要代码块、不要解释）：
+                {"anchorTimeText":"本轮时间锚点的一句话说明（如：今天 2026-08-30 周日 早上；下一个春节是 2027-02-06）",
+                 "isRetrospective":false,
+                 "note":"一句话说明这句话主要在做什么（新汇报/提问/回顾…）",
+                 "events":[{"kind":"meal|food|weight|exercise|study|task|fact","subject":"self","date":"2026-08-29","period":"早餐","refObject":"","summary":"今早吃了2个鸡蛋、一杯豆浆","isNew":true}]}
+                """.formatted(LocalDate.now(ZONE), userMessage == null ? "" : userMessage,
+                dialog, situation, focus);
+        try {
+            Map<String, Object> m = groundWithTools(prompt, tools, toolExecutor);
+            List<GroundedEvent> events = new ArrayList<>();
+            if (m.get("events") instanceof List<?> list) {
+                for (Object e : list) {
+                    if (!(e instanceof Map<?, ?> mm)) continue;
+                    events.add(new GroundedEvent(str(mm.get("kind")), str(mm.get("subject")),
+                            str(mm.get("date")), str(mm.get("period")), str(mm.get("refObject")),
+                            str(mm.get("summary")), Boolean.TRUE.equals(mm.get("isNew"))));
+                }
+            }
+            return new Grounding(str(m.get("anchorTimeText")), events,
+                    Boolean.TRUE.equals(m.get("isRetrospective")), str(m.get("note")));
+        } catch (Exception e) {
+            log.warn("上下文锚定失败，降级为空锚点 err={}", e.getMessage());
+            return new Grounding();
+        }
+    }
+
+    /**
+     * 锚定工具循环：锚定器像人一样，需要外部信息（节日/节气在今年的公历日期、地点归属、坐标等）
+     * 时可调用工具查实，再输出最终锚定 JSON。无工具或模型不调用工具时等价于一次性抽取。
+     */
+    private Map<String, Object> groundWithTools(String prompt, List<ToolDef> tools, ToolExecutor executor) {
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(new ChatMessage("user", prompt));
+        List<ToolDef> available = (tools == null) ? List.of() : tools;
+        for (int step = 0; step < 4; step++) {
+            ToolChatResult result = toolChatStep(messages, available);
+            if (!result.hasToolCalls()) {
+                return parseObject(result.content());
+            }
+            messages.add(new ChatMessage("assistant", result.content() == null ? "" : result.content(),
+                    result.toolCalls(), null));
+            for (ToolCall call : result.toolCalls()) {
+                String output;
+                try {
+                    output = executor == null ? "工具不可用" : executor.execute(call.name(), call.argumentsJson());
+                } catch (Exception e) {
+                    output = "工具执行失败：" + e.getMessage();
+                }
+                messages.add(new ChatMessage("tool", output, null, call.id()));
+            }
+        }
+        ToolChatResult finalResult = toolChatStep(messages, List.of());
+        return parseObject(finalResult.content());
+    }
+
+    private ToolChatResult toolChatStep(List<ChatMessage> messages, List<ToolDef> tools) {
+        return toolChat("", messages, tools);
+    }
+
+    private Map<String, Object> parseObject(String content) {
+        String json = stripCodeFence(content);
+        try {
+            return mapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            throw new IllegalStateException("锚定返回非合法 JSON: " + content, e);
         }
     }
 
@@ -386,9 +509,25 @@ public class SpringAiLlmAdapter implements LlmPort {
             if (key.isBlank()) continue;
             String chart = str(mm.get("chartType")).trim().toLowerCase();
             if (!chart.equals("line") && !chart.equals("bar") && !chart.equals("pie")) chart = "line";
-            result.add(new MetricDef(key, str(mm.get("label")), str(mm.get("unit")), chart));
+            List<MetricSeries> series = toMetricSeries(mm.get("series"), key, str(mm.get("label")));
+            result.add(new MetricDef(key, str(mm.get("label")), str(mm.get("unit")), chart, series));
         }
         return result;
+    }
+
+    private List<MetricSeries> toMetricSeries(Object o, String defaultKey, String defaultLabel) {
+        if (!(o instanceof List<?> list) || list.isEmpty()) {
+            return List.of(new MetricSeries(defaultKey, defaultLabel));
+        }
+        List<MetricSeries> result = new ArrayList<>();
+        for (Object e : list) {
+            if (!(e instanceof Map<?, ?> mm)) continue;
+            String sk = str(mm.get("key")).trim();
+            if (sk.isBlank()) continue;
+            String sl = str(mm.get("label"));
+            result.add(new MetricSeries(sk, sl.isBlank() ? sk : sl));
+        }
+        return result.isEmpty() ? List.of(new MetricSeries(defaultKey, defaultLabel)) : result;
     }
 
     private List<MetricPointIn> toMetricPoints(Object o) {

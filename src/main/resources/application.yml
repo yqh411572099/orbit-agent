@@ -87,6 +87,8 @@ spring:
 spring.ai.openai.api-key: ${LLM_API_KEY:${ARK_API_KEY:}}
 spring.ai.openai.base-url: ${LLM_BASE_URL:${ARK_BASE_URL:https://ark.cn-beijing.volces.com/api/plan/v3}}
 spring.ai.openai.chat.options.model: ${LLM_MODEL:${ARK_MODEL:ark-code-latest}}
+# 轻量级模型：用于锚定/意图判定/分类等结构化轻任务。留空则回退主模型（包月制下默认同模型）。
+spring.ai.openai.chat.options.light-model: ${LLM_LIGHT_MODEL:${ARK_LIGHT_MODEL:}}
 spring.ai.openai.chat.completions-path: /chat/completions
 
 ---

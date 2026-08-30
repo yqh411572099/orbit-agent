@@ -18,4 +18,6 @@ public interface RawChatLogRepository {
 
     int archiveAndDeleteBySubSessionId(Long subSessionId, Long userId, String reason);
     int archiveAndDeleteByUserId(Long userId, String reason);
+    /** 归档并删除某子会话中 id >= fromId 的对话（含 fromId），返回删除条数。 */
+    int archiveAndDeleteSubSessionFromId(Long subSessionId, Long userId, Long fromId, String reason);
 }

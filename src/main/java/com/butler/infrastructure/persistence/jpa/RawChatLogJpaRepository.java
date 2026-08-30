@@ -34,4 +34,12 @@ public interface RawChatLogJpaRepository extends JpaRepository<RawChatLogPO, Lon
     int deleteBySubSessionId(Long subSessionId);
     @Transactional
     int deleteByUserId(Long userId);
+
+    @Query("select r from RawChatLogPO r where r.subSessionId = :subId and r.id >= :fromId order by r.id asc")
+    List<RawChatLogPO> findBySubSessionIdAndIdGreaterThanEqual(@Param("subId") Long subSessionId,
+                                                               @Param("fromId") Long fromId);
+
+    @Transactional
+    void deleteBySubSessionIdAndIdGreaterThanEqual(@Param("subId") Long subSessionId,
+                                                   @Param("fromId") Long fromId);
 }

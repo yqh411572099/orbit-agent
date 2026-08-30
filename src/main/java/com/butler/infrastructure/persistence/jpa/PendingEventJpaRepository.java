@@ -8,6 +8,10 @@ public interface PendingEventJpaRepository extends JpaRepository<PendingEventPO,
     List<PendingEventPO> findByUserIdAndScopeAndStatusOrderByCreatedAtDesc(Long userId, String scope, String status);
     List<PendingEventPO> findByUserIdAndScopeAndSubSessionIdAndStatusOrderByCreatedAtDesc(
             Long userId, String scope, Long subSessionId, String status);
+    List<PendingEventPO> findByUserIdAndScopeAndSubSessionIdAndEventTypeAndMessageIdIsNotNullOrderByCreatedAtAsc(
+            Long userId, String scope, Long subSessionId, String eventType);
+    List<PendingEventPO> findByUserIdAndScopeAndSubSessionIdIsNullAndEventTypeAndMessageIdIsNotNullOrderByCreatedAtAsc(
+            Long userId, String scope, String eventType);
     @org.springframework.data.jpa.repository.Query("select max(e.updatedAt) from PendingEventPO e where e.userId = :uid")
     java.time.Instant findLastUpdatedAt(@org.springframework.data.repository.query.Param("uid") Long uid);
 }

@@ -15,6 +15,8 @@ public class MainSessionPO {
     private String city;
     private String latitude;
     private String longitude;
+    @Column(name = "info_source_mode", length = 32)
+    private String infoSourceMode;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -28,4 +30,6 @@ public class MainSessionPO {
     public void setLatitude(String latitude) { this.latitude = latitude; }
     public String getLongitude() { return longitude; }
     public void setLongitude(String longitude) { this.longitude = longitude; }
+    public String getInfoSourceMode() { return infoSourceMode; }
+    public void setInfoSourceMode(String infoSourceMode) { this.infoSourceMode = infoSourceMode; }
 }

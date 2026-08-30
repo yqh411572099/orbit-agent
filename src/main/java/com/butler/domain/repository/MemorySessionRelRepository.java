@@ -7,6 +7,7 @@ public interface MemorySessionRelRepository {
     MemorySessionRel save(MemorySessionRel rel);
     List<MemorySessionRel> findByMemoryId(Long memoryId);
     List<MemorySessionRel> findBySubSessionId(Long subSessionId);
+    List<MemorySessionRel> findAll();
     boolean existsByMemoryIdAndSubSessionId(Long memoryId, Long subSessionId);
     void deleteBySubSessionId(Long subSessionId);
     void deleteByMemoryId(Long memoryId);

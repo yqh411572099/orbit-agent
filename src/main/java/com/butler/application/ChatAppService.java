@@ -47,7 +47,10 @@ public class ChatAppService {
     private final MainSessionRepository mainSessionRepository;
     private final PendingGoalProposalStore pendingGoalProposalStore;
     private final ObjectMapper objectMapper;
-    private static final int MAX_TOOL_CALLS = 5;
+    /** 一次对话内，所有工具累计最多调用次数（防止工具无限堆叠）。 */
+    private static final int MAX_TOOL_CALLS = 20;
+    /** 同一工具+同一参数，遇到超时/网络等非必现异常时最多连续重试次数。 */
+    private static final int MAX_SAME_CALL_RETRY = 3;
 
     /** SSE 事件回调：chunk=文本增量，goal_created=已创建子对话，done=结束。 */
     public interface ChatListener {
@@ -92,12 +95,13 @@ public class ChatAppService {
     public void saveUserLocation(Long userId, String city, String latitude, String longitude) {
         MainSession ms = mainSessionRepository.findByUserId(userId).orElse(null);
         if (ms == null) {
-            ms = new MainSession(null, userId, Instant.now(), city, latitude, longitude);
+            ms = new MainSession(null, userId, Instant.now(), city, latitude, longitude, InfoSourceMode.ENABLED);
         } else {
             ms = new MainSession(ms.getId(), userId, ms.getCreatedAt(),
                     city != null ? city : ms.getCity(),
                     latitude != null ? latitude : ms.getLatitude(),
-                    longitude != null ? longitude : ms.getLongitude());
+                    longitude != null ? longitude : ms.getLongitude(),
+                    ms.getInfoSourceMode());
         }
         mainSessionRepository.save(ms);
     }
@@ -139,6 +143,7 @@ public class ChatAppService {
         // 累积本轮思考过程，随助手回复一起落库，刷新后仍可查看
         StringBuilder reasoningAcc = new StringBuilder();
         final boolean[] proposalEmitted = {false};
+        final String[] changeProposalId = {null};
         ChatListener wrapped = new ChatListener() {
             @Override public void onChunk(String text) { try { listener.onChunk(text); } catch (Exception ignored) {} }
             @Override public void onReasoning(String text) {
@@ -154,24 +159,40 @@ public class ChatAppService {
                 try { listener.onGoalProposal(proposalId, proposal); } catch (Exception ignored) {}
             }
             @Override public void onProposal(ChangePreview preview) {
+                if (preview != null && preview.proposalId() != null) changeProposalId[0] = preview.proposalId();
                 try { listener.onProposal(preview); } catch (Exception ignored) {}
             }
         };
         try {
-            if (type == SessionType.SUB && subSessionId != null) {
-                ChangePreview proposal = conversationAppService.proposeSubSessionChange(subSessionId, content);
-                if (proposal != null && !proposal.isEmpty()) {
-                    wrapped.onProposal(proposal);
+            // 感知层上下文锚定（主/子对话通用）：回答前先把相对时间/指代解析成绝对对象，
+            // 结果同时喂给正文回答与事件抽取，避免把昨天/历史的事件误记到今天。
+            LlmPort.Grounding grounding = ground(userId, type, subSessionId, content, wrapped);
+            String groundingReasoning = renderGroundingReasoning(grounding);
+            if (groundingReasoning != null) wrapped.onReasoning(groundingReasoning);
+            String reply = type == SessionType.MAIN
+                    ? handleMain(userId, content, wrapped, grounding)
+                    : streamReply(userId, type, subSessionId, content, wrapped, grounding);
+            // 子对话：在“正文回答之后”做变更提取，并把本轮助手的最终回答一并传入，
+            // 让结构化抽取以助手已经算出的结论为准（数值与正文一致、把该填的序列填齐）。
+            if (type == SessionType.SUB && subSessionId != null && !proposalEmitted[0]) {
+                try {
+                    ChangePreview proposal = conversationAppService.proposeSubSessionChange(subSessionId, content, reply, grounding);
+                    if (proposal != null && !proposal.isEmpty()) {
+                        wrapped.onProposal(proposal);
+                    }
+                } catch (Exception e) {
+                    log.warn("变更提取失败 sub={} err={}", subSessionId, e.getMessage());
                 }
             }
-            String reply = type == SessionType.MAIN
-                    ? handleMain(userId, content, wrapped)
-                    : streamReply(userId, type, subSessionId, content, wrapped);
-            // 建目标确认卡本身就是这一轮的产出，不再额外落一条重复的助手文本
-            if (!proposalEmitted[0]) {
-                if (reply == null || reply.isBlank()) reply = "我暂时没有整理出回答，可以换个说法再试试。";
-                conversationAppService.saveMessage(userId, type, subSessionId, "assistant", reply,
-                        reasoningAcc.length() == 0 ? null : reasoningAcc.toString());
+            // 助手回复一律持久化，刷新/历史可见。主对话的建目标确认卡虽以结构化卡片流式推送，
+            // 但其 announce 文案同样入库，避免确认/调研那几轮在历史里“只有用户消息、没有助手回复”。
+            if (reply == null || reply.isBlank()) reply = "我暂时没有整理出回答，可以换个说法再试试。";
+            var saved = conversationAppService.saveMessage(userId, type, subSessionId, "assistant", reply,
+                    reasoningAcc.length() == 0 ? null : reasoningAcc.toString());
+            // 把本轮变更提案挂到这条助手消息上，供对话内渲染只读变更溯源卡（old→new + 采纳状态）
+            if (changeProposalId[0] != null && saved != null && saved.getId() != null) {
+                try { conversationAppService.attachProposalToMessage(changeProposalId[0], saved.getId()); }
+                catch (Exception ignored) {}
             }
             return reply;
         } catch (Exception e) {
@@ -185,7 +206,7 @@ public class ChatAppService {
     }
 
     /** 主对话：先判断是否要创建目标，信息不足则追问，齐全则创建子对话。 */
-    private String handleMain(Long userId, String content, ChatListener listener) {
+    private String handleMain(Long userId, String content, ChatListener listener, LlmPort.Grounding grounding) {
         // 若存在待确认的建目标方案，先判断用户是确认/修改/取消，避免把确认当成新需求。
         PendingGoalProposalStore.StoredProposal pending = pendingGoalProposalStore.findLatestByUser(userId);
         if (pending != null) {
@@ -274,7 +295,9 @@ public class ChatAppService {
                     }
                     var stored = pendingGoalProposalStore.put(userId, proposal);
                     listener.onGoalProposal(stored.id(), proposal);
-                    return "请核对确认卡信息";
+                    String announce = proposalAnnounce(proposal);
+                    streamPreset(announce, listener);
+                    return announce;
                 }
                 // 必填信息齐全：直接创建子对话
                 String goal = content;
@@ -300,14 +323,13 @@ public class ChatAppService {
         }
 
         // 非创建意图：正常主对话
-        return streamReply(userId, SessionType.MAIN, null, content, listener);
+        return streamReply(userId, SessionType.MAIN, null, content, listener, grounding);
     }
 
     /** 用联网工具调研目标信息，产出结构化待确认方案。 */
     private GoalProposal researchGoalProposal(Long userId, ScenarioDomain domain, String seed, ChatListener listener) {
-        List<LlmPort.ToolDef> tools = toolRegistry.forScenario(domain.toolCategories()).stream()
-                .map(c -> new LlmPort.ToolDef(c.name(), c.description(), c.parametersSchema()))
-                .toList();
+        // 建目标调研同样遵守主会话“外部计费工具开关”：关闭时不注册 WebSearch/GeoSearch。
+        List<LlmPort.ToolDef> tools = toolDefsForMode(resolveInfoSourceMode(userId, SessionType.MAIN, null));
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Shanghai"));
         String locHint = locationHint(userId);
         String toolLead = tools.isEmpty()
@@ -486,21 +508,9 @@ public class ChatAppService {
         subSessionRepository.save(sub);
     }
 
-    private String proposalAnnounce(GoalProposal p) {
-        StringBuilder sb = new StringBuilder("我查到了「")
-                .append(p.title()).append("」的相关信息，整理如下，请你核对后再创建：\n");
-        for (Section s : p.sections()) {
-            sb.append("\n").append(s.icon()).append(" ").append(s.title()).append("\n");
-            for (Row r : s.rows()) {
-                sb.append("- ").append(r.label());
-                if (!r.label().isBlank()) sb.append("：");
-                sb.append(r.value());
-                if (r.uncertain()) sb.append("（待确认）");
-                sb.append("\n");
-            }
-        }
-        sb.append("\n确认无误就点下方“确认创建”；需要改就直接告诉我。");
-        return sb.toString();
+   private String proposalAnnounce(GoalProposal p) {
+        return "我已经查到「" + p.title() + "」的相关信息，整理在下方的确认卡里了，"
+                + "你核对一下：没问题就点“确认创建”，需要改就直接告诉我或点“需要修改”。";
     }
 
     /** 用户确认待建方案：真正创建子对话。 */
@@ -547,51 +557,87 @@ public class ChatAppService {
     }
 
     private String streamReply(Long userId, SessionType type, Long subSessionId, String content,
-                               ChatListener listener) {
+                               ChatListener listener, LlmPort.Grounding grounding) {
         String systemPrompt = buildSystemPrompt(userId, type, subSessionId);
+        systemPrompt = systemPrompt + renderGrounding(grounding);
         List<LlmPort.ChatMessage> messages = new ArrayList<>();
         for (RawChatLog l : history(userId, type, subSessionId)) {
             if ("system".equals(l.getRole())) continue;
             messages.add(new LlmPort.ChatMessage(l.getRole(), l.getContent()));
         }
         messages.add(new LlmPort.ChatMessage("user", content));
-        if (type == SessionType.SUB && subSessionId != null) {
-            List<LlmPort.ToolDef> tools = toolsFor(subSessionId);
-            if (!tools.isEmpty()) {
-                String finalAnswer = runToolLoop(systemPrompt, messages, listener, tools, subSessionId);
-                streamPreset(finalAnswer, listener);
-                return finalAnswer;
-            }
+        // 工具是模型对话时的通用外部能力；按本会话“外部计费工具开关”决定是否注册 WebSearch/GeoSearch。
+        InfoSourceMode infoMode = resolveInfoSourceMode(userId, type, subSessionId);
+        List<LlmPort.ToolDef> tools = toolDefsForMode(infoMode);
+        if (!infoMode.externalToolsEnabled()) {
+            systemPrompt = systemPrompt + "\n【说明】本会话已关闭联网搜索与地图检索（外部计费工具），"
+                    + "不要声称或尝试联网/查周边；涉及实时或地理位置的问题，可说明当前未开启这些能力。本地知识库与计算工具仍可正常使用。\n";
         }
+        if (!tools.isEmpty()) {
+            String finalAnswer = runToolLoop(systemPrompt, messages, listener, tools, userId, type, subSessionId);
+            streamPreset(finalAnswer, listener);
+            return finalAnswer;
+        }
+        listener.onReasoning(type == SessionType.MAIN
+                ? "🧠 结合全局记忆与上下文直接回答，本轮无需调用外部工具。"
+                : "🧠 结合本目标的记忆与上下文直接回答，本轮无需调用外部工具。");
         return llmPort.streamChat(systemPrompt, messages, listener::onChunk);
     }
 
-    private List<LlmPort.ToolDef> toolsFor(Long subSessionId) {
-        SubSession sub = subSessionRepository.findById(subSessionId).orElse(null);
-        if (sub == null || !scenarioRegistry.supports(sub.getScenarioType())) return List.of();
-        return toolRegistry.forScenario(scenarioRegistry.get(sub.getScenarioType()).toolCategories())
-                .stream()
+    /** 全部工具大类（通用能力，不区分会话/场景）。 */
+    private List<LlmPort.ToolDef> allToolDefs() {
+        return toolRegistry.all().stream()
                 .map(c -> new LlmPort.ToolDef(c.name(), c.description(), c.parametersSchema()))
                 .toList();
     }
 
+    /** 读取会话的外部计费工具开关：子对话取子会话配置，主对话取主会话配置，缺省开启。 */
+    private InfoSourceMode resolveInfoSourceMode(Long userId, SessionType type, Long subSessionId) {
+        try {
+            if (type == SessionType.SUB && subSessionId != null) {
+                return subSessionRepository.findById(subSessionId)
+                        .map(SubSession::getInfoSourceMode).orElse(InfoSourceMode.ENABLED);
+            }
+            return mainSessionRepository.findByUserId(userId)
+                    .map(MainSession::getInfoSourceMode).orElse(InfoSourceMode.ENABLED);
+        } catch (Exception e) {
+            return InfoSourceMode.ENABLED;
+        }
+    }
+
+    /**
+     * 按开关过滤工具：关闭时不注册按量计费的外部工具（WebSearch 联网、GeoSearch 地图），
+     * 保留 Calculator、KnowledgeBase 等本地/不计费能力；开启时全量工具可用。
+     * 模型是否、何时调用外部工具由提示词自主判断，这里只决定工具是否可用。
+     */
+    private List<LlmPort.ToolDef> toolDefsForMode(InfoSourceMode mode) {
+        java.util.Set<String> billed = java.util.Set.of("WebSearch", "GeoSearch");
+        return allToolDefs().stream()
+                .filter(t -> mode.externalToolsEnabled() || !billed.contains(t.name()))
+                .toList();
+    }
+
     private String runToolLoop(String systemPrompt, List<LlmPort.ChatMessage> seed, ChatListener listener,
-                               List<LlmPort.ToolDef> toolDefs, Long subSessionId) {
-        StringBuilder guide = new StringBuilder("\n\n【可用工具】当你需要外部或实时信息时，必须调用下面的工具获取，不要凭空编造或直接回答“查不到”：\n");
+                               List<LlmPort.ToolDef> toolDefs, Long userId, SessionType type, Long subSessionId) {
+        StringBuilder guide = new StringBuilder("\n\n【可用工具】遇到以下两类情况都应先调用下面的工具，而不是自己处理：①需要模型之外的外部或实时信息时，调用工具获取，不要凭空编造或直接回答“查不到”；②需要计算（数字运算、日期推算等）时，优先去 Calculator 计算工具里找对应能力，工具确实不支持的再自行推算，不要默认心算：\n");
         for (LlmPort.ToolDef t : toolDefs) {
             guide.append("- ").append(t.name()).append("：").append(t.description()).append("\n");
         }
         guide.append("""
                 工具选择的通用原则（按信息来源的可靠性，而非逐个问题判断）：
+                0. 当回答依赖模型之外的信息（会随时间变化、需要来源依据、你无法仅凭已有知识确定），或用户明确要求联网/搜索/核实时，调用相应工具获取，不要凭记忆编造或直接估算；这与当前是哪个目标、你“是否觉得自己知道答案”无关。
+                0.1 凡是计算——数字加减乘除、求和/均值/换算/差额、日期相差几天几周、星期几、推算日期等——优先调用 Calculator（子工具 math_calc/calendar_calc）取得结果，不要在正文里心算或直接给数字结论；只有计算工具确实不支持的复杂运算才自行推算。这与你“是否需要外部信息”无关，纯计算同样要优先走工具。
                 1. 确定性、结构化的事实（地理位置、地址归属的区划/街道、经纬度、周边场所、距离、路线，以及系统内已注册的功能/关注项），优先调用对应的结构化工具，其返回的是权威真实数据，不要用联网搜索去猜，也不要凭语言模型记忆编造；
                    - 问“某地附近/周边/在某地找X”时，把该参照地点放进工具的 location 参数，不要默认用用户当前定位；只有用户说“我附近/周边”且没指定地点时，才以用户当前定位为中心；
-                2. 只有查最新政策、补贴金额、办事流程、新闻动态等会随时间变化的文本信息时，才使用联网搜索或知识库；
+                2. 模型之外、且非结构化现实事实的信息，用联网搜索或知识库；
                 3. 一旦某个工具返回了明确结果，以该结果为准回答，不要再用其他弱来源覆盖或质疑它；
                 4. 调用周边/检索类工具时，query 只传简短关键词，不要传整句话。
                 调用工具后，结合工具返回的结果用中文回答用户。""");
         systemPrompt = systemPrompt + guide;
         List<LlmPort.ChatMessage> messages = new ArrayList<>(seed);
-        ToolContext ctx = buildToolContext(subSessionId);
+        ToolContext ctx = buildToolContext(userId, type, subSessionId);
+        int totalToolCalls = 0;
+        java.util.Map<String, Integer> sameCallRetries = new java.util.HashMap<>();
         for (int step = 0; step < MAX_TOOL_CALLS; step++) {
             LlmPort.ToolChatResult result = llmPort.toolChat(systemPrompt, messages, toolDefs);
             if (!result.hasToolCalls()) {
@@ -601,16 +647,75 @@ public class ChatAppService {
             }
             messages.add(new LlmPort.ChatMessage("assistant", result.content() == null ? "" : result.content(),
                     result.toolCalls(), null));
+            List<String> toolOutputs = new java.util.ArrayList<>();
+            boolean hitCap = false;
             for (LlmPort.ToolCall call : result.toolCalls()) {
+                if (totalToolCalls >= MAX_TOOL_CALLS) {
+                    listener.onReasoning("⛔ 本轮工具调用已达上限（" + MAX_TOOL_CALLS + " 次），先基于已有结果作答。");
+                    messages.add(new LlmPort.ChatMessage("tool",
+                            "工具调用次数已达上限，请不要再调用工具，直接基于上面已取得的结果用中文回答。",
+                            null, call.id()));
+                    toolOutputs.add("工具调用次数已达上限，请基于已有结果直接回答。");
+                    hitCap = true;
+                    continue;
+                }
+                totalToolCalls++;
+                String sig = call.name() + "|" + normArgs(call.argumentsJson());
+                int retryCount = sameCallRetries.getOrDefault(sig, 0);
                 listener.onReasoning("🔧 调用 " + call.name() + "：" + summarizeArgs(call.argumentsJson()));
                 String output = invokeTool(call, ctx);
+                // 同一工具+同一参数：仅当是超时/网络等非必现异常时才允许重试，最多 MAX_SAME_CALL_RETRY 次；
+                // 参数错误、无此工具等确定性失败不算可重试，直接把结果回灌让模型换路，不空转。
+                if (retryCount > 0 && !isTransientToolFailure(output)) {
+                    output = output + "\n（注：相同调用已重复且非临时性错误，请不要再用相同参数重试，换一种方式或基于现有信息回答。）";
+                }
+                if (isTransientToolFailure(output)) {
+                    if (retryCount >= MAX_SAME_CALL_RETRY) {
+                        listener.onReasoning("⛔ " + toolName(call.name()) + " 连续临时失败已达 " + MAX_SAME_CALL_RETRY
+                                + " 次，停止重试，请改用其他方式或基于已有信息回答。");
+                        output = output + "\n（该工具连续多次临时失败，已停止重试；请改用其他工具或基于已有信息回答，不要继续以相同参数调用。）";
+                    } else {
+                        sameCallRetries.put(sig, retryCount + 1);
+                        listener.onReasoning("↪️ " + toolName(call.name()) + " 疑似临时失败（第 " + (retryCount + 1)
+                                + "/" + MAX_SAME_CALL_RETRY + " 次），可重试。");
+                    }
+                } else {
+                    sameCallRetries.put(sig, 0);
+                }
                 listener.onReasoning("📥 " + toolName(call.name()) + "返回：" + summarizeToolOutput(output));
                 messages.add(new LlmPort.ChatMessage("tool", output, null, call.id()));
+                toolOutputs.add(output);
             }
+            if (hitCap) break;
         }
         LlmPort.ToolChatResult finalResult = llmPort.toolChat(systemPrompt, messages, toolDefs);
         return finalResult.content() == null || finalResult.content().isBlank()
                 ? "我查了一些信息但还需要你补充，我们继续聊。" : finalResult.content();
+    }
+
+    /** 归一化工具参数作为重试判重签名：去掉空白与 key 顺序差异。 */
+    private String normArgs(String argumentsJson) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode n =
+                    new ObjectMapper().readTree(argumentsJson == null ? "{}" : argumentsJson);
+            return new ObjectMapper().writeValueAsString(n);
+        } catch (Exception e) {
+            return argumentsJson == null ? "" : argumentsJson.trim();
+        }
+    }
+
+    /** 判断工具返回是否为超时/网络等非必现（可重试）异常；参数错误、无此工具、空结果等确定性情况不算。 */
+    private boolean isTransientToolFailure(String output) {
+        if (output == null) return false;
+        String s = output.toLowerCase(java.util.Locale.ROOT);
+        if (!s.contains("失败") && !s.contains("error") && !s.contains("timeout")
+                && !s.contains("timed out") && !s.contains("异常")) {
+            return false;
+        }
+        return s.contains("timeout") || s.contains("timed out") || s.contains("超时")
+                || s.contains("connection") || s.contains("连接") || s.contains("network")
+                || s.contains("网络") || s.contains("503") || s.contains("502") || s.contains("429")
+                || s.contains("unreachable") || s.contains("reset");
     }
 
     private String invokeTool(LlmPort.ToolCall call, ToolContext ctx) {
@@ -625,7 +730,7 @@ public class ChatAppService {
 
     private String toolName(String name) {
         return switch (name) {
-            case "GeoService" -> "地图";
+            case "GeoSearch" -> "地图";
             case "KnowledgeBase" -> "知识库";
             case "WebSearch" -> "联网";
             default -> name;
@@ -658,20 +763,26 @@ public class ChatAppService {
         return oneLine.length() > 160 ? oneLine.substring(0, 160) + "…" : oneLine;
     }
 
-    private ToolContext buildToolContext(Long subSessionId) {
+    private ToolContext buildToolContext(Long userId, SessionType type, Long subSessionId) {
+        java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"));
+        // 主对话：无子对话上下文，仅带用户定位等全局信息。
+        if (type != SessionType.SUB || subSessionId == null) {
+            return new ToolContext(userId, "main", null, null,
+                    withUserLocationFallback(userId, new java.util.LinkedHashMap<>()), today);
+        }
         SubSession sub = subSessionRepository.findById(subSessionId).orElse(null);
         if (sub == null) {
-            return new ToolContext(null, "sub", subSessionId, null, Map.of(),
-                    java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")));
+            return new ToolContext(userId, "sub", subSessionId, null,
+                    withUserLocationFallback(userId, new java.util.LinkedHashMap<>()), today);
         }
-        java.util.Map<String, String> collected = Map.of();
+        java.util.Map<String, String> collected = new java.util.LinkedHashMap<>();
         if (scenarioRegistry.supports(sub.getScenarioType())) {
             ScenarioDomain domain = scenarioRegistry.get(sub.getScenarioType());
-            collected = ScenarioStateSupport.parse(domain, sub.getCollectedInfo(), CustomFocusLabels.read(sub)).collected();
+            collected.putAll(ScenarioStateSupport.parse(domain, sub.getCollectedInfo(),
+                    CustomFocusLabels.read(sub)).collected());
         }
         collected = withUserLocationFallback(sub.getUserId(), collected);
-        return new ToolContext(sub.getUserId(), "sub", subSessionId, sub.getScenarioType(), collected,
-                java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")));
+        return new ToolContext(sub.getUserId(), "sub", subSessionId, sub.getScenarioType(), collected, today);
     }
 
     /** 把一段固定文本伪装成流式逐字输出，体验一致。 */
@@ -679,6 +790,111 @@ public class ChatAppService {
         for (char c : text.toCharArray()) {
             listener.onChunk(String.valueOf(c));
         }
+    }
+
+    /**
+     * 感知层上下文锚定：把本轮用户消息里的相对时间/指代解析成绝对对象。主/子对话通用。
+     * 失败时降级为空锚点（不阻塞对话）。
+     */
+    private LlmPort.Grounding ground(Long userId, SessionType type, Long subSessionId, String content,
+                                     ChatListener listener) {
+        try {
+            List<LlmPort.ChatMessage> recent = history(userId, type, subSessionId).stream()
+                    .filter(l -> !"system".equals(l.getRole()))
+                    .map(l -> new LlmPort.ChatMessage(l.getRole(), l.getContent()))
+                    .toList();
+            String situation = "";
+            String focusCatalog = "";
+            if (type == SessionType.SUB && subSessionId != null) {
+                SubSession sub = subSessionRepository.findById(subSessionId).orElse(null);
+                if (sub != null && scenarioRegistry.supports(sub.getScenarioType())) {
+                    ScenarioDomain domain = scenarioRegistry.get(sub.getScenarioType());
+                    ScenarioStateSupport.ScenarioState st = ScenarioStateSupport.parse(
+                            domain, sub.getCollectedInfo(), CustomFocusLabels.read(sub));
+                    ScenarioDomain.Situation sit = domain.situation(
+                            st.collected(), st.focusAreas(), LocalDate.now(ZoneId.of("Asia/Shanghai")));
+                    if (sit.hasSummary()) situation = sit.summary();
+                    StringBuilder fc = new StringBuilder();
+                    for (ScenarioDomain.FocusArea f : domain.focusAreas()) {
+                        fc.append(f.key()).append("=").append(f.label()).append("；");
+                    }
+                    focusCatalog = fc.toString();
+                }
+            }
+            // 锚定器可像人一样使用工具：需要查实节日公历日期、地点归属、坐标等时自行调用。
+            // 同样遵守本会话“外部计费工具开关”：关闭时不注册 WebSearch/GeoSearch。
+            List<LlmPort.ToolDef> groundTools = toolDefsForMode(resolveInfoSourceMode(userId, type, subSessionId));
+            ToolContext ctx = buildToolContext(userId, type, subSessionId);
+            return llmPort.groundContext(content, recent, situation, focusCatalog, groundTools,
+                    (name, args) -> {
+                        if (listener != null) listener.onReasoning("🔎 锚定时调用 " + toolName(name) + "：" + summarizeArgs(args));
+                        String out = invokeToolByName(name, args, ctx);
+                        if (listener != null) listener.onReasoning("📥 " + toolName(name) + "返回：" + summarizeToolOutput(out));
+                        return out;
+                    });
+        } catch (Exception e) {
+            log.warn("上下文锚定失败，降级为空锚点 err={}", e.getMessage());
+            return new LlmPort.Grounding();
+        }
+    }
+
+    /** 供锚定器执行工具：把 (toolName, argsJson) 映射到对应工具大类。 */
+    private String invokeToolByName(String name, String argsJson, ToolContext ctx) {
+        return invokeTool(new LlmPort.ToolCall(null, name, argsJson), ctx);
+    }
+
+    /**
+     * 把锚定结果渲染成思考过程文案（展示给用户，便于核对模型对时间/指代的理解是否正确）。
+     * 无锚点、无事件时返回 null（不输出空块）。
+     */
+    private String renderGroundingReasoning(LlmPort.Grounding g) {
+        if (g == null) return null;
+        boolean hasAnchor = g.anchorTimeText() != null && !g.anchorTimeText().isBlank();
+        boolean hasEvents = g.events() != null && !g.events().isEmpty();
+        if (!hasAnchor && !hasEvents) return null;
+        StringBuilder sb = new StringBuilder("🕰️ 上下文锚定\n");
+        if (hasAnchor) sb.append("· 时间锚点：").append(g.anchorTimeText()).append("\n");
+        if (g.isRetrospective()) sb.append("· 本轮以回顾/询问过去为主，不新增今天的记录\n");
+        if (hasEvents) {
+            for (LlmPort.GroundedEvent e : g.events()) {
+                sb.append(e.isNew() ? "· [新事件] " : "· [仅回顾] ");
+                sb.append(e.date() == null || e.date().isBlank() ? "日期未定" : e.date());
+                if (e.period() != null && !e.period().isBlank()) sb.append(" ").append(e.period());
+                if (e.kind() != null && !e.kind().isBlank()) sb.append("（").append(e.kind()).append("）");
+                if (e.subject() != null && !e.subject().isBlank() && !"self".equals(e.subject()))
+                    sb.append(" 主体=").append(e.subject());
+                if (e.summary() != null && !e.summary().isBlank()) sb.append("：").append(e.summary());
+                if (e.refObject() != null && !e.refObject().isBlank()) sb.append(" → 指向：").append(e.refObject());
+                sb.append("\n");
+            }
+        }
+        if (g.note() != null && !g.note().isBlank()) sb.append("· 判断：").append(g.note()).append("\n");
+        return sb.toString().stripTrailing();
+    }
+
+    /** 把锚定结果渲染成注入系统提示的上下文块（通用，不区分场景）。 */
+    private String renderGrounding(LlmPort.Grounding g) {
+        if (g == null) return "";
+        StringBuilder sb = new StringBuilder("\n\n【本轮上下文锚定（感知层已消解时间/指代，以下为权威时间归属）】\n");
+        if (g.anchorTimeText() != null && !g.anchorTimeText().isBlank())
+            sb.append("- 时间锚点：").append(g.anchorTimeText()).append("\n");
+        if (g.events() != null && !g.events().isEmpty()) {
+            sb.append("- 本轮事件（每个事件归属它实际发生的自然日，记账/计算只取 isNew=true 且对应当天的事件）：\n");
+            for (LlmPort.GroundedEvent e : g.events()) {
+                sb.append("  · [").append(e.isNew() ? "新事件" : "仅回顾").append("] ")
+                  .append(e.date() == null || e.date().isBlank() ? "日期未定" : e.date())
+                  .append(e.period() == null || e.period().isBlank() ? "" : " " + e.period())
+                  .append(e.kind() == null || e.kind().isBlank() ? "" : "（" + e.kind() + "）")
+                  .append("：").append(e.summary() == null ? "" : e.summary())
+                  .append(e.refObject() == null || e.refObject().isBlank() ? "" : " → 指向：" + e.refObject())
+                  .append("\n");
+            }
+        }
+        sb.append("- 铁律：计算/记账（摄入、消耗、体重、学习时长等）只统计上面标注为“新事件”且发生在对应自然日的内容；")
+          .append("历史对话里其他日期的事件不得并入今天；仅回顾/询问的事件不产生新记录。\n");
+        if (g.isRetrospective())
+            sb.append("- 本轮以回顾/询问过去为主，不要为今天新建数据记录。\n");
+        return sb.toString();
     }
 
     private String buildSystemPrompt(Long userId, SessionType type, Long subSessionId) {
@@ -721,6 +937,16 @@ public class ChatAppService {
                 }
             });
             sb.append("\n请基于该场景和上述待办/记忆给出具体、可执行的建议，使用中文。");
+                    sb.append("""
+
+                    【关于待确认的变更，务必遵守】
+                    - 不要在回答正文里渲染“当前体重/当前值/右上角展示位/指标卡”之类的状态展示，也不要替界面复述当前指标——当前值界面已有独立卡片展示，你只需针对用户这句话回应。
+                    - “已确认的当前指标值”和“本子任务收集的用户信息”里的数据，才是已生效事实。任何差值、达标、趋势、进度等衍生计算，一律只能用这些已生效数据。
+                    - 用户本轮新报的数据（一个新体重、新日期、新目标等）属于“待确认变更”，会在用户确认后才生效。在用户确认前：
+                      1) 严禁把它当成当前值展示，严禁用它做差值、达标、趋势、进度等衍生计算；
+                      2) 可以复述确认（如“你报的是185斤，确认后我再更新”），但要让用户知道这是待生效的新值，不是已保存值；
+                      3) 不要把待确认值当作已沉淀事实写进记忆式陈述。
+                    """);
         }
         return sb.toString();
     }

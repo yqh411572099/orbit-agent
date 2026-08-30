@@ -44,6 +44,13 @@ public class MemorySessionRelRepositoryAdapter implements MemorySessionRelReposi
     }
 
     @Override
+    public List<MemorySessionRel> findAll() {
+        return jpa.findAll().stream()
+                .map(po -> new MemorySessionRel(po.getId(), po.getMemoryId(), po.getSubSessionId(), po.getBindTime()))
+                .toList();
+    }
+
+    @Override
     public boolean existsByMemoryIdAndSubSessionId(Long memoryId, Long subSessionId) {
         return jpa.existsByMemoryIdAndSubSessionId(memoryId, subSessionId);
     }

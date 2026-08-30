@@ -6,6 +6,12 @@ import java.util.function.Consumer;
 
 public interface LlmPort {
 
+    /**
+     * 模型档位：主模型负责对话正文、工具规划、事件抽取、记忆提炼等重任务；
+     * 轻量模型（light）负责上下文锚定、建目标意图判定、确认回复分类等结构化轻任务。
+     * 轻量模型未单独配置时回退主模型（包月制下默认同模型），将来可用配置切到更小/更快/更省的模型。
+     */
+
     CreateGoalResult createGoal(String userGoal, String scenarioType);
 
     AdjustTasksResult adjustTasks(String sessionDesc, List<TaskItem> currentTasks, String newMessage);
@@ -31,12 +37,65 @@ public interface LlmPort {
      * 字段以“场景字段 key=新值”的形式表达，由各场景自己解释，不含任何孕期专有字段。
      */
     ScenarioEvent extractScenarioEvent(String scenarioType, List<String> keyFieldHints,
-                                      String collectedInfo, String newMessage);
+                                      List<String> domainRuleHints,
+                                      String collectedInfo, String newMessage, String existingMetrics,
+                                      String assistantReply, String groundingText);
+
+    /**
+     * 感知层“上下文锚定”：在回答/抽取之前，把用户这句话里的相对时间、指代、简称
+     * 解析成绝对对象（哪个自然日、哪一餐、哪个人物、哪条待办/关注项、哪个地点、哪个量化指标），
+     * 并区分本轮是“新发生/要记账的事件”还是“仅回顾/询问历史”。
+     * 主对话/子对话通用，与具体场景无关；场景只影响可选的锚点提示。
+     * 返回结构化锚点；无法锚定的字段留空，绝不编造。
+     */
+    Grounding groundContext(String userMessage, List<ChatMessage> recentMessages,
+                            String situationText, String focusCatalogText,
+                            List<ToolDef> tools, ToolExecutor toolExecutor);
+
+    /** 工具执行回调：锚定器需要外部信息（节日公历日期、地点归属、坐标等）时按名调用对应工具。 */
+    @FunctionalInterface
+    interface ToolExecutor {
+        String execute(String toolName, String argumentsJson);
+    }
+
+
+    /**
+     * 一次上下文锚定结果。
+     * @param anchorTimeText  给模型/下游阅读的“本轮时间锚点”自然语言说明（绝对日期+餐次/时段）。
+     * @param events          本轮解析出的、应当被记账/处理的事件；每个事件带绝对日期与归类。
+     * @param isRetrospective 这句话是否只是在回顾/询问过去，而非新汇报一条要落库的数据。
+     */
+    record Grounding(String anchorTimeText, List<GroundedEvent> events, boolean isRetrospective, String note) {
+        public Grounding() { this("", List.of(), false, ""); }
+    }
+    /**
+     * 一个被锚定到绝对对象的事件。
+     * @param kind      事件类别（meal/food/weight/exercise/study/task/fact/...），仅作下游参考。
+     * @param subject   主体（self/partner/...），无法判断给 self。
+     * @param date      事件实际发生/被测量的自然日 yyyy-MM-dd（绝对，已消解“今天/昨天/今早”等）。
+     * @param period    时段/餐次（早餐/午餐/晚餐/上午/晚上 等），无法判断留空。
+     * @param refObject 指代落到的具体对象（哪条待办/关注项/指标/地点），无法判断留空。
+     * @param summary   该事件一句话事实（如“今早吃了 2 个鸡蛋、一杯豆浆”）。
+     * @param isNew     是否为本轮新发生、需要记账/处理；仅回顾为 false。
+     */
+    record GroundedEvent(String kind, String subject, String date, String period,
+                         String refObject, String summary, boolean isNew) {}
 
     /** 一个可视化指标卡定义：模型决定展示哪个指标、单位、用什么图表。 */
-    record MetricDef(String key, String label, String unit, String chartType) {}
+    /**
+     * 一张指标卡/图。key=卡片唯一标识（series 只有一条时可与指标同名）；
+     * series=这张图里的多条序列（如“每日热量消耗构成”含静息/运动/总消耗三条）；
+     * 单指标图 series 给一条即可。chartType=line/bar/pie。
+     */
+    record MetricDef(String key, String label, String unit, String chartType, List<MetricSeries> series) {
+        public MetricDef(String key, String label, String unit, String chartType) {
+            this(key, label, unit, chartType, List.of(new MetricSeries(key, label)));
+        }
+    }
+    /** 图内的一条序列。key 用于匹配数据点，label 为图例名。 */
+    record MetricSeries(String key, String label) {}
 
-    /** 一条指标数据点（用户汇报的数值）。date 为 yyyy-MM-dd，缺省取今天。 */
+    /** 一条指标数据点（用户汇报的数值）。date 为 yyyy-MM-dd，缺省取今天。key 对应某个 series 的 key。 */
     record MetricPointIn(String key, Double value, String date) {}
 
     /**
@@ -48,15 +107,16 @@ public interface LlmPort {
      */
     record ScenarioEvent(java.util.Map<String,String> fieldUpdates, List<String> completedKeywords,
                          List<String> enableFocusAreas, List<String> disableFocusAreas, String note,
-                         boolean affectsTasks, List<MetricDef> metricDefs, List<MetricPointIn> metricPoints) {
+                         boolean affectsTasks, List<MetricDef> metricDefs, List<MetricPointIn> metricPoints,
+                         List<String> metricRemove) {
         public ScenarioEvent(java.util.Map<String,String> fieldUpdates, List<String> completedKeywords,
                              List<String> enableFocusAreas, List<String> disableFocusAreas, String note) {
-            this(fieldUpdates, completedKeywords, enableFocusAreas, disableFocusAreas, note, false, List.of(), List.of());
+            this(fieldUpdates, completedKeywords, enableFocusAreas, disableFocusAreas, note, false, List.of(), List.of(), List.of());
         }
         public ScenarioEvent(java.util.Map<String,String> fieldUpdates, List<String> completedKeywords,
                              List<String> enableFocusAreas, List<String> disableFocusAreas, String note,
                              boolean affectsTasks) {
-            this(fieldUpdates, completedKeywords, enableFocusAreas, disableFocusAreas, note, affectsTasks, List.of(), List.of());
+            this(fieldUpdates, completedKeywords, enableFocusAreas, disableFocusAreas, note, affectsTasks, List.of(), List.of(), List.of());
         }
     }
 

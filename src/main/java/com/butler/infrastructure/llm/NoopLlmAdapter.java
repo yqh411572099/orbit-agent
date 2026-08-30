@@ -29,7 +29,9 @@ public class NoopLlmAdapter implements LlmPort {
     }
     @Override
     public ScenarioEvent extractScenarioEvent(String scenarioType, List<String> keyFieldHints,
-                                             String collectedInfo, String newMessage) {
+                                             List<String> domainRuleHints,
+                                             String collectedInfo, String newMessage, String existingMetrics,
+                                             String assistantReply, String groundingText) {
         return new ScenarioEvent(java.util.Map.of(), List.of(), List.of(), List.of(), "");
     }
     @Override
@@ -39,6 +41,12 @@ public class NoopLlmAdapter implements LlmPort {
     @Override
     public ProposalReply classifyProposalReply(String proposalSummary, String userMessage) {
         return new ProposalReply("unrelated", "");
+    }
+    @Override
+    public Grounding groundContext(String userMessage, List<ChatMessage> recentMessages,
+                                   String situationText, String focusCatalogText,
+                                   List<ToolDef> tools, ToolExecutor toolExecutor) {
+        return new Grounding();
     }
 
     @Override

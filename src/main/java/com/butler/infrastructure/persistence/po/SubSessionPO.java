@@ -26,6 +26,8 @@ public class SubSessionPO {
     private String metricDefs;
     @Column(nullable = false)
     private String status = "ACTIVE";
+    @Column(name = "info_source_mode", length = 32)
+    private String infoSourceMode;
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
     @Column(name = "updated_at", nullable = false)
@@ -59,6 +61,8 @@ public class SubSessionPO {
     public void setMetricDefs(String metricDefs) { this.metricDefs = metricDefs; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getInfoSourceMode() { return infoSourceMode; }
+    public void setInfoSourceMode(String infoSourceMode) { this.infoSourceMode = infoSourceMode; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

@@ -19,7 +19,8 @@ public record ChangePreview(
         List<String> memories,
         String note,
         List<String> metricCards,
-        List<String> metricPoints
+        List<String> metricPoints,
+        List<String> metricRemoved
 ) {
     public boolean isEmpty() {
         return fields.isEmpty() && focusAdded.isEmpty() && focusRemoved.isEmpty()
@@ -27,7 +28,8 @@ public record ChangePreview(
                 && tasksCompleted.isEmpty() && (tasksPlanned == null || tasksPlanned.isEmpty())
                 && memories.isEmpty()
                 && (metricCards == null || metricCards.isEmpty())
-                && (metricPoints == null || metricPoints.isEmpty());
+                && (metricPoints == null || metricPoints.isEmpty())
+                && (metricRemoved == null || metricRemoved.isEmpty());
     }
 
     /** collected 字段变更：label 旧值 -> 新值。 */

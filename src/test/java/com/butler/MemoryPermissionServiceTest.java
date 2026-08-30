@@ -19,16 +19,18 @@ class MemoryPermissionServiceTest {
     private final MemoryPermissionService service = new MemoryPermissionService(memoryRepo, relRepo);
 
     @Test
-    void mainSessionReadsAllMemories() {
+    void mainSessionReadsOnlyUnboundMemories() {
+        // 记忆10 绑定到子对话100；记忆11 未绑定（全局可见）
+        when(relRepo.findAll()).thenReturn(List.of(
+                new MemorySessionRel(1L, 10L, 100L, Instant.now())));
         when(memoryRepo.findByUserId(1L)).thenReturn(List.of(
-                new UserMemory(10L, 1L, MemoryCategory.FACT, "记忆A", null, Instant.now()),
-                new UserMemory(11L, 1L, MemoryCategory.FACT, "记忆B", null, Instant.now())));
+                new UserMemory(10L, 1L, MemoryCategory.FACT, "目标内记忆", null, Instant.now()),
+                new UserMemory(11L, 1L, MemoryCategory.FACT, "全局记忆", null, Instant.now())));
 
         List<UserMemory> result = service.readableMemories(1L, SessionType.MAIN, null);
 
-        assertEquals(2, result.size());
-        verify(memoryRepo).findByUserId(1L);
-        verifyNoInteractions(relRepo);
+        assertEquals(1, result.size());
+        assertEquals("全局记忆", result.get(0).getContent());
     }
 
     @Test

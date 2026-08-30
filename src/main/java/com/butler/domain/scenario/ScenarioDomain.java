@@ -65,6 +65,15 @@ public interface ScenarioDomain {
         return attributesFromCollected(updates == null ? java.util.Map.of() : updates);
     }
 
+    /**
+     * 该域专属的事件提取规则提示（渐进式披露的“域规则层”）。
+     * 只放本场景特有的判定约束（如孕期的孕周/预产期反推规则、里程碑日期字段写法），
+     * 通用规则由事件提取器内核统一提供，不在此重复。默认无域专属规则。
+     */
+    default List<String> eventRuleHints() {
+        return List.of();
+    }
+
     /** 提供给 LLM 的关键字段提示，稳定使用 key，避免场景字段散落在提示词外。 */
     default List<String> keyFieldHints() {
         return collectFields().stream()
@@ -227,15 +236,6 @@ public interface ScenarioDomain {
      */
     record Situation(String summary, java.util.List<String> alerts) {
         public boolean hasSummary() { return summary != null && !summary.isBlank(); }
-    }
-
-    /**
-     * 该场景挂载的工具大类名（如 GeoService / KnowledgeBase / WebSearch）。
-     * “是否调用工具、查什么”由模型在对话中自行决定；场景只声明“这件事允许用哪些大类”。
-     * 返回空列表表示该场景不提供外部工具。
-     */
-    default List<String> toolCategories() {
-        return List.of();
     }
 
     /**

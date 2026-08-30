@@ -78,8 +78,14 @@ public class PregnancyScenario implements ScenarioDomain {
     }
 
     @Override
-    public List<String> toolCategories() {
-        return List.of("GeoService", "KnowledgeBase", "WebSearch");
+    public List<String> eventRuleHints() {
+        return List.of(
+                "关键日期：用户确定某里程碑节点的实际预约/执行日期时（如“NT约到8月20号”“8月7日做早孕B超”“建档定在X日”），"
+                + "把日期写入对应的 milestone_<节点key>_date 字段（关键字段里以“预约/实际执行日期”结尾的那些），不要写到预产期/孕周字段。",
+                "严禁仅凭某次检查的预约日期反推预产期或当前孕周（例如“NT约到8月20号”不等于“今天是12周”）；"
+                + "只有用户明确说“今天/现在孕N周”或“预产期改到X”时才更新 dueDate/currentWeek。",
+                "建档、NT、大排畸、唐筛/无创、糖耐、胎心监护等节点的日期属于产检里程碑更新，不是新增关注项。"
+        );
     }
 
     @Override

@@ -34,7 +34,8 @@ public class PendingProposalStore {
                               Map<String, String> customFocusLabels,
                               List<Attribute> memoryUpserts, List<String> completedKeywords,
                               List<LlmPort.TaskItem> plannedDynamicTasks,
-                              List<LlmPort.MetricDef> metricDefs, List<LlmPort.MetricPointIn> metricPoints) {
+                              List<LlmPort.MetricDef> metricDefs, List<LlmPort.MetricPointIn> metricPoints,
+                              List<String> metricRemove) {
         String id = UUID.randomUUID().toString();
         Instant now = Instant.now();
         Instant expires = now.plusSeconds(TTL_SECONDS);
@@ -47,7 +48,8 @@ public class PendingProposalStore {
                 plannedDynamicTasks == null ? List.of() : List.copyOf(plannedDynamicTasks),
                 expires,
                 metricDefs == null ? List.of() : List.copyOf(metricDefs),
-                metricPoints == null ? List.of() : List.copyOf(metricPoints));
+                metricPoints == null ? List.of() : List.copyOf(metricPoints),
+                metricRemove == null ? List.of() : List.copyOf(metricRemove));
         try {
             repository.save(new PendingEvent(id, userId, PendingEvent.Scope.SUB, subSessionId,
                     EVENT_TYPE, objectMapper.writeValueAsString(proposal),
@@ -90,6 +92,15 @@ public class PendingProposalStore {
         });
     }
 
+    /** 把提案挂到触发它的那条助手消息上，用于在对话里渲染只读变更溯源卡。 */
+    public void attachMessage(String proposalId, Long messageId) {
+        if (proposalId == null || messageId == null) return;
+        repository.findById(proposalId).ifPresent(e -> {
+            e.setMessageId(messageId);
+            repository.save(e);
+        });
+    }
+
     public String getPreview(String proposalId) {
         return repository.findById(proposalId).map(PendingEvent::getPreview).orElse(null);
     }
@@ -109,7 +120,8 @@ public class PendingProposalStore {
                     p.newCollected(), p.effectiveFocus(), p.customFocusLabels(), p.memoryUpserts(),
                     p.completedKeywords(), p.plannedDynamicTasks(), e.getExpiresAt(),
                     p.metricDefs() == null ? List.of() : p.metricDefs(),
-                    p.metricPoints() == null ? List.of() : p.metricPoints());
+                    p.metricPoints() == null ? List.of() : p.metricPoints(),
+                    p.metricRemove() == null ? List.of() : p.metricRemove());
         } catch (Exception ex) {
             return null;
         }
@@ -129,6 +141,7 @@ public class PendingProposalStore {
             List<LlmPort.TaskItem> plannedDynamicTasks,
             Instant expiresAt,
             List<LlmPort.MetricDef> metricDefs,
-            List<LlmPort.MetricPointIn> metricPoints
+            List<LlmPort.MetricPointIn> metricPoints,
+            List<String> metricRemove
     ) {}
 }

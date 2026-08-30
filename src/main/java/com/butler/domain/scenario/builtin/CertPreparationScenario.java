@@ -169,11 +169,6 @@ public class CertPreparationScenario implements ScenarioDomain {
     }
 
     @Override
-    public List<String> toolCategories() {
-        return List.of("KnowledgeBase", "WebSearch");
-    }
-
-    @Override
     public boolean researchBeforeCreate() {
         return true;
     }

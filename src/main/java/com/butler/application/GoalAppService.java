@@ -7,7 +7,6 @@ import com.butler.domain.repository.*;
 import com.butler.domain.scenario.ScenarioDomain;
 import com.butler.domain.scenario.ScenarioRegistry;
 import com.butler.infrastructure.llm.LlmPort;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -27,7 +26,7 @@ public class GoalAppService {
     private final LlmPort llmPort;
     private final UserMemoryRepository userMemoryRepository;
     private final MemorySessionRelRepository relRepository;
-    private final ObjectMapper objectMapper;
+    private final MetricAppService metricAppService;
 
     public GoalAppService(MissionRepository missionRepository,
                           SubSessionRepository subSessionRepository,
@@ -37,7 +36,7 @@ public class GoalAppService {
                           LlmPort llmPort,
                           UserMemoryRepository userMemoryRepository,
                           MemorySessionRelRepository relRepository,
-                          ObjectMapper objectMapper) {
+                          MetricAppService metricAppService) {
         this.missionRepository = missionRepository;
         this.subSessionRepository = subSessionRepository;
         this.taskRepository = taskRepository;
@@ -46,7 +45,7 @@ public class GoalAppService {
         this.llmPort = llmPort;
         this.userMemoryRepository = userMemoryRepository;
         this.relRepository = relRepository;
-        this.objectMapper = objectMapper;
+        this.metricAppService = metricAppService;
     }
 
     @Transactional
@@ -86,16 +85,11 @@ public class GoalAppService {
 
         SubSession sub = subSessionRepository.save(new SubSession(
                 null, userId, mission.getId(), scenarioType, sessionDesc,
-                buildCollectedInfo(domain, collected, selectedFocus),
+                buildCollectedInfo(domain, collected, selectedFocus, focusLabels),
                 SubSessionStatus.ACTIVE, Instant.now()));
 
         if (result.metricDefs() != null && !result.metricDefs().isEmpty()) {
-            try {
-                sub.setMetricDefs(objectMapper.writeValueAsString(result.metricDefs().stream()
-                        .map(d -> new MetricAppService.Def(d.key(), d.label(), d.unit(), d.chartType()))
-                        .toList()));
-                sub = subSessionRepository.save(sub);
-            } catch (Exception ignored) {}
+            metricAppService.mergeDefs(sub.getId(), result.metricDefs());
         }
 
         List<ScenarioDomain.PlannedTask> planned = domain.plannedTasks(collected, selectedFocus, today);
@@ -124,7 +118,8 @@ public class GoalAppService {
     }
 
     /** 把创建时收集的字段和关注项整理成可读文本，作为子任务收集的用户信息持久化。 */
-    private String buildCollectedInfo(ScenarioDomain domain, Map<String, String> collected, List<String> selectedFocus) {
+    private String buildCollectedInfo(ScenarioDomain domain, Map<String, String> collected,
+                                      List<String> selectedFocus, Map<String, String> focusLabels) {
         StringBuilder sb = new StringBuilder();
         if (collected != null) {
             for (ScenarioDomain.CollectField f : domain.collectFields()) {
@@ -138,8 +133,10 @@ public class GoalAppService {
             sb.append("重点关注项：");
             List<String> labels = new ArrayList<>();
             for (String key : selectedFocus) {
-                domain.focusAreas().stream().filter(f -> f.key().equals(key)).findFirst()
-                        .ifPresent(f -> labels.add(f.label()));
+                String label = domain.focusAreas().stream().filter(f -> f.key().equals(key)).findFirst()
+                        .map(ScenarioDomain.FocusArea::label)
+                        .orElse(focusLabels == null ? null : focusLabels.get(key));
+                if (label != null && !label.isBlank()) labels.add(label);
             }
             sb.append(String.join("、", labels)).append("\n");
         }

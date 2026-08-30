@@ -27,6 +27,7 @@ public class PendingEventRepositoryAdapter implements PendingEventRepository {
         po.setEventType(e.getEventType());
         po.setPayload(e.getPayload());
         po.setPreview(e.getPreview());
+        po.setMessageId(e.getMessageId());
         po.setStatus(e.getStatus().name());
         po.setExpiresAt(e.getExpiresAt());
         po.setCreatedAt(e.getCreatedAt() == null ? Instant.now() : e.getCreatedAt());
@@ -59,11 +60,22 @@ public class PendingEventRepositoryAdapter implements PendingEventRepository {
         return findPendingByUser(userId, scope, subSessionId).stream().findFirst();
     }
 
+    @Override
+    public List<PendingEvent> findMessageLinked(Long userId, PendingEvent.Scope scope, Long subSessionId, String eventType) {
+        List<PendingEventPO> rows = subSessionId == null
+                ? jpa.findByUserIdAndScopeAndSubSessionIdIsNullAndEventTypeAndMessageIdIsNotNullOrderByCreatedAtAsc(
+                        userId, scope.name(), eventType)
+                : jpa.findByUserIdAndScopeAndSubSessionIdAndEventTypeAndMessageIdIsNotNullOrderByCreatedAtAsc(
+                        userId, scope.name(), subSessionId, eventType);
+        return rows.stream().map(this::toDomain).toList();
+    }
+
     private PendingEvent toDomain(PendingEventPO po) {
         PendingEvent e = new PendingEvent(po.getId(), po.getUserId(), PendingEvent.Scope.valueOf(po.getScope()),
                 po.getSubSessionId(), po.getEventType(), po.getPayload(),
                 PendingEvent.Status.valueOf(po.getStatus()), po.getExpiresAt(), po.getCreatedAt(), po.getUpdatedAt());
         e.setPreview(po.getPreview());
+        e.setMessageId(po.getMessageId());
         return e;
     }
 }

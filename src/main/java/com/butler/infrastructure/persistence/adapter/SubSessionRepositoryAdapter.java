@@ -33,6 +33,7 @@ public class SubSessionRepositoryAdapter implements SubSessionRepository {
         po.setStudyMaterials(s.getStudyMaterials());
         po.setMetricDefs(s.getMetricDefs());
         po.setStatus(s.getStatus().name());
+        po.setInfoSourceMode(s.getInfoSourceMode().name());
         po.setCreatedAt(s.getCreatedAt());
         SubSessionPO saved = jpa.save(po);
         return toDomain(saved);
@@ -76,6 +77,7 @@ public class SubSessionRepositoryAdapter implements SubSessionRepository {
         s.setCustomFocusLabels(po.getCustomFocusLabels());
         s.setStudyMaterials(po.getStudyMaterials());
         s.setMetricDefs(po.getMetricDefs());
+        s.setInfoSourceMode(com.butler.domain.model.InfoSourceMode.from(po.getInfoSourceMode()));
         s.setUpdatedAt(po.getUpdatedAt());
         return s;
     }

@@ -29,6 +29,7 @@ public class ChatController {
     private final com.butler.application.FocusAreaAppService focusAreaAppService;
     private final com.butler.domain.service.GeocodePort geocodePort;
     private final com.butler.application.ConversationAppService conversationAppService;
+    private final com.butler.application.InfoSourceModeAppService infoSourceModeAppService;
 
     public ChatController(ChatAppService chatAppService,
                           SubSessionRepository subSessionRepository,
@@ -37,7 +38,8 @@ public class ChatController {
                           SubSessionAppService subSessionAppService,
                           com.butler.application.FocusAreaAppService focusAreaAppService,
                           com.butler.domain.service.GeocodePort geocodePort,
-                          com.butler.application.ConversationAppService conversationAppService) {
+                          com.butler.application.ConversationAppService conversationAppService,
+                          com.butler.application.InfoSourceModeAppService infoSourceModeAppService) {
         this.chatAppService = chatAppService;
         this.subSessionRepository = subSessionRepository;
         this.missionRepository = missionRepository;
@@ -46,6 +48,7 @@ public class ChatController {
         this.focusAreaAppService = focusAreaAppService;
         this.geocodePort = geocodePort;
         this.conversationAppService = conversationAppService;
+        this.infoSourceModeAppService = infoSourceModeAppService;
     }
 
     /** 已注册的场景类型（前端创建目标弹窗据此动态生成表单）。 */
@@ -62,6 +65,34 @@ public class ChatController {
                                         f.audience().name(), f.defaultSelected(), f.mandatory(), f.dependsOn()))
                                 .toList()))
                 .toList();
+    }
+
+    /** 信息获取档位：三档选项 + 当前会话所选档位。 */
+    @GetMapping("/info-source-mode")
+    public java.util.Map<String, Object> getInfoSourceMode(@RequestParam String sessionType,
+                                                           @RequestParam(required = false) Long subSessionId) {
+        Long userId = CurrentUser.userId();
+        SessionType type = SessionType.valueOf(sessionType.toUpperCase());
+        com.butler.domain.model.InfoSourceMode mode =
+                infoSourceModeAppService.get(userId, type, subSessionId);
+        return java.util.Map.of(
+                "mode", mode.name(),
+                "label", mode.getLabel(),
+                "options", infoSourceModeAppService.options());
+    }
+
+    /** 设置信息获取档位（仅界面按钮调用；对话内容不得修改）。 */
+    @PostMapping("/info-source-mode")
+    public java.util.Map<String, Object> setInfoSourceMode(@RequestBody java.util.Map<String, String> body) {
+        Long userId = CurrentUser.userId();
+        SessionType type = SessionType.valueOf(body.getOrDefault("sessionType", "main").toUpperCase());
+        Long subSessionId = body.get("subSessionId") == null || body.get("subSessionId").isBlank()
+                ? null : Long.valueOf(body.get("subSessionId"));
+        com.butler.domain.model.InfoSourceMode mode =
+                com.butler.domain.model.InfoSourceMode.from(body.get("mode"));
+        com.butler.domain.model.InfoSourceMode saved =
+                infoSourceModeAppService.set(userId, type, subSessionId, mode);
+        return java.util.Map.of("mode", saved.name(), "label", saved.getLabel());
     }
 
     @GetMapping("/sub-sessions")

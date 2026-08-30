@@ -144,8 +144,4 @@ public class ExamPreparationScenario implements ScenarioDomain {
         return new ScenarioDomain.Situation(summary, alerts);
     }
 
-    @Override
-    public List<String> toolCategories() {
-        return List.of("KnowledgeBase", "WebSearch");
-    }
 }

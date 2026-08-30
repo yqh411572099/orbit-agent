@@ -36,15 +36,22 @@
   .reasoning-box .r-arrow { font-size: 10px; transition: transform .15s; }
   .reasoning-box .r-body { padding: 0 10px 8px; white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
   .reasoning-box.collapsed .r-body { display: none; }
+  .change-trail { margin-top: 8px; background: #fafbfc; border: 1px dashed #d8dce3; border-radius: 8px; font-size: 12px; color: #5a6069; overflow: hidden; }
+  .change-trail .ct-head { padding: 6px 10px; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+  .change-trail .ct-head:hover { background: #f0f2f5; }
+  .change-trail .ct-body { padding: 2px 10px 8px; }
+  .change-trail .ct-body > div { margin-bottom: 6px; }
   .cursor { display: inline-block; width: 7px; height: 14px; background: #3b6ef5; margin-left: 2px; animation: blink 1s infinite; vertical-align: middle; }
   @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
-  .input-bar { padding: 16px 24px; background: #fff; border-top: 1px solid #e6e8ec; display: flex; gap: 12px; }
-  .input-bar input { flex: 1; padding: 12px 16px; border: 1px solid #d8dbe0; border-radius: 8px; font-size: 14px; outline: none; }
-  .input-bar input:focus { border-color: #3b6ef5; }
+  .input-bar { padding: 16px 24px; background: #fff; border-top: 1px solid #e6e8ec; display: flex; gap: 12px; align-items: flex-end; }
+  .input-bar textarea { flex: 1; padding: 12px 16px; border: 1px solid #d8dbe0; border-radius: 8px; font-size: 14px; outline: none; font-family: inherit; line-height: 1.5; resize: none; min-height: 46px; max-height: 160px; overflow-y: auto; box-sizing: border-box; }
+  .input-bar textarea:focus { border-color: #3b6ef5; }
   .input-bar button { padding: 12px 24px; background: #3b6ef5; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
   .input-bar button:disabled { background: #a9b4cc; cursor: not-allowed; }
   .input-bar .mic-btn { background:#f3f4f6; color:#3b6ef5; padding:12px 16px; }
   .input-bar .mic-btn.recording { background:#e5484d; color:#fff; animation: micpulse 1.2s infinite; }
+  .send-hint { align-self: center; font-size: 12px; color: #9aa1ad; white-space: nowrap; display: flex; align-items: center; gap: 3px; }
+  .send-hint kbd { background: #f3f4f6; border: 1px solid #d8dbe0; border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; font-size: 11px; font-family: inherit; color: #6b7280; }
   @keyframes micpulse { 0%,100%{opacity:1} 50%{opacity:.6} }
   .voice-status { padding:6px 24px; font-size:12px; color:#3b6ef5; background:#f5f8ff; border-top:1px solid #e0e8ff; }
   .voice-status.error { color:#e5484d; background:#fdecec; }
@@ -120,6 +127,7 @@
   <div class="chat-header">
     <span id="chatTitle">🏠 主对话</span>
     <span style="display:flex;gap:8px;align-items:center;">
+      <button id="infoModeBtn" class="complete-btn" onclick="openInfoModeEditor()">🛰 外部工具：<b id="infoModeLabel">开启</b></button>
       <button id="focusEditBtn" class="complete-btn" style="display:none;" onclick="openFocusEditor()">⚙ 关注项</button>
       <span id="knowBadge" style="display:none;background:#fff4e5;color:#b56800;border:1px solid #ffd9a8;border-radius:12px;padding:2px 8px;font-size:12px;cursor:pointer;" onclick="toggleKnowledgePanel()">🧠 待确认知识 <b id="knowBadgeCount">0</b></span>
       <span class="tag" id="chatTag">全局总入口</span>
@@ -130,9 +138,10 @@
   <div id="metricsBar" style="display:none;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 16px;font-size:12px;background:#f6fbf7;border-bottom:1px solid #e2efe6;"></div>
   <div class="messages" id="messages"></div>
   <div class="input-bar">
-    <input id="input" name="msg" autocomplete="off" autocapitalize="off" placeholder="输入消息，Enter 发送..." onkeydown="if(event.key==='Enter')send()">
+    <textarea id="input" name="msg" rows="1" autocomplete="off" autocapitalize="off" placeholder="输入消息，⌘/Ctrl + Enter 发送，Enter 换行..." onkeydown="onChatKeydown(event)" oninput="autoGrow(this)"></textarea>
     <button id="micBtn" onclick="toggleVoice()" title="语音输入" class="mic-btn">🎤</button>
     <button id="sendBtn" onclick="send()">发送</button>
+    <span class="send-hint"><kbd id="sendHintKey">⌘</kbd>+<kbd>Enter</kbd> 发送</span>
   </div>
   <div id="voiceStatus" class="voice-status" style="display:none;"></div>
 </div>
@@ -149,6 +158,17 @@
     <div style="display:flex;gap:8px;margin-top:12px;">
       <button onclick="saveFocusAreas()" style="flex:1;">保存</button>
       <button onclick="document.getElementById('focusModalBg').style.display='none'" style="flex:1;background:#eee;">取消</button>
+    </div>
+  </div>
+</div>
+<div class="modal-bg" id="infoModeModalBg">
+  <div class="modal" style="width:520px;max-width:92vw;">
+    <h2>外部计费工具开关</h2>
+    <div style="font-size:12px;color:#8a909b;margin-bottom:8px;">控制联网搜索、地图检索这两个按量计费工具是否在当前「<b id="infoModeScope">主对话</b>」可用；本地知识库与计算工具不受影响。只能在此设置，对话中不会更改。</div>
+    <div id="infoModeList" style="display:flex;flex-direction:column;gap:8px;max-height:60vh;overflow:auto;"></div>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button onclick="saveInfoMode()" style="flex:1;">保存</button>
+      <button onclick="document.getElementById('infoModeModalBg').classList.remove('show')" style="flex:1;background:#eee;">取消</button>
     </div>
   </div>
 </div>
@@ -335,6 +355,9 @@ function bootstrap() {
 }
 
 async function init() {
+  const isMac = /mac|iphone|ipad|ipod/i.test(navigator.platform || navigator.userAgentData?.platform || '');
+  const hintKey = document.getElementById('sendHintKey');
+  if (hintKey) hintKey.textContent = isMac ? '⌘' : 'Ctrl';
   const res = await fetch('/api/scenarios');
   scenarios = await res.json();
   const sel = document.getElementById('goalType');
@@ -507,7 +530,10 @@ function selectMain() {
   document.getElementById('chatTag').textContent = '全局总入口';
   document.getElementById('tasksPanel').classList.remove('show');
   setLocBanner('', false);
+  renderMetrics(null);      // 指标卡是子对话专属，切回主对话时隐藏
+  updatePregnancyHeader(null);
   loadHistory();
+  loadInfoMode();
 }
 function selectSub(id, name) {
   current = { type: 'sub', subSessionId: id };
@@ -517,6 +543,7 @@ function selectSub(id, name) {
   document.getElementById('focusEditBtn').style.display = 'inline-block';
   ensureSubLocation();
   loadHistory();
+  loadInfoMode();
 }
 
 function setLocBanner(html, display) {
@@ -616,7 +643,9 @@ function resetSyncCursors() {
 }
 
 function renderMessage(m) {
-  return addBubble(m.role, m.content, m.reasoning);
+  const node = addBubble(m.role, m.content, m.reasoning, m.id);
+  if (m.changeTrail) appendChangeTrail(node, m.changeTrail);
+  return node;
 }
 
 async function initialSync() {
@@ -651,16 +680,16 @@ function applySync(data, isInitial) {
     } else if (mb.messages && mb.messages.length) {
       mb.messages.forEach(m => {
         if (m.id && el.querySelector(`.msg[data-msg-id="${m.id}"]`)) return;
-        // 流式发送时已本地插入用户气泡和助手气泡，按内容去重避免重复
-        const sameContent = (m.role === 'assistant')
-          ? (d) => { const a = d.querySelector('.answer'); return (a ? a.textContent : d.textContent || '').trim() === (m.content || '').trim(); }
-          : (d) => (d.textContent || '').trim() === (m.content || '').trim();
-        const exists = [...el.querySelectorAll('.msg')].some(d =>
-          !d.dataset.msgId && d.classList.contains(m.role === 'user' ? 'user' : 'assistant') && sameContent(d));
-        if (exists) {
-          const node = [...el.querySelectorAll('.msg')].find(d =>
-            !d.dataset.msgId && d.classList.contains(m.role === 'user' ? 'user' : 'assistant') && sameContent(d));
-          if (m.id && node) node.dataset.msgId = m.id;
+        // 流式发送时已本地插入用户/助手气泡。优先把服务端消息“绑定”到那个本地气泡（贴 msg-id/changeTrail），
+        // 不再依赖脆弱的文本互相包含：本地气泡按发送顺序与服务端新消息一一对应，取最后一个未绑定的同角色流式气泡。
+        const roleCls = m.role === 'user' ? 'user' : 'assistant';
+        const pending = [...el.querySelectorAll(`.msg.${roleCls}:not([data-msg-id])`)]
+          .filter(d => d.dataset.streaming === '1' || m.role === 'user');
+        if (pending.length) {
+          const node = pending[pending.length - 1];
+          node.dataset.streaming = '0';
+          if (m.id) node.dataset.msgId = m.id;
+          if (m.role === 'assistant' && m.changeTrail) appendChangeTrail(node, m.changeTrail);
           return;
         }
         renderMessage(m);
@@ -727,10 +756,11 @@ async function openChart(encKey, encLabel) {
   document.getElementById('chartModalBg').style.display = 'flex';
   try {
     const d = await (await fetch(`/api/sub-sessions/${current.subSessionId}/metrics/${encodeURIComponent(key)}`)).json();
-    const pts = d.points || [];
-    if (pts.length < 1) { document.getElementById('chartEmpty').style.display = 'block'; return; }
+    const series = d.series || [];
+    const total = series.reduce((a, s2) => a + (s2.points || []).length, 0);
+    if (total < 1) { document.getElementById('chartEmpty').style.display = 'block'; return; }
     document.getElementById('chartTitle').textContent = `${d.label || label}（单位：${d.unit || ''}）· ${chartName(d.chartType)}`;
-    document.getElementById('chartBody').innerHTML = renderChart(pts, d.chartType || 'line', d.unit || '');
+    document.getElementById('chartBody').innerHTML = renderChart(series, d.chartType || 'line', d.unit || '');
   } catch (e) {
     document.getElementById('chartEmpty').style.display = 'block';
   }
@@ -738,60 +768,89 @@ async function openChart(encKey, encLabel) {
 
 function chartName(t) { return t === 'bar' ? '柱状图' : t === 'pie' ? '占比图' : '折线图'; }
 
-function renderChart(pts, type, unit) {
-  const W = 520, H = 260, pad = 42;
-  const vals = pts.map(p => Number(p.value));
-  const labels = pts.map(p => (p.date || '').slice(5));
-  const min = Math.min(...vals), max = Math.max(...vals);
+function renderChart(series, type, unit) {
+  const W = 520, H = 260, pad = 46;
+  const colors = ['#3b6ef5','#5aa36f','#f5a623','#e05b5b','#9b6df5','#2bb3c0'];
+  // 收集所有序列的日期作为共享横轴（去重升序）
+  const dateSet = new Set();
+  series.forEach(s2 => (s2.points || []).forEach(p => dateSet.add(p.date)));
+  const dates = [...dateSet].sort();
+  const x = date => dates.length <= 1 ? W / 2 : pad + dates.indexOf(date) * (W - pad * 2) / (dates.length - 1);
+  let allVals = [];
+  series.forEach(s2 => (s2.points || []).forEach(p => allVals.push(Number(p.value))));
+  const min = Math.min(...allVals), max = Math.max(...allVals);
   const span = (max - min) || 1;
   const lo = type === 'pie' ? 0 : min - span * 0.15;
   const hi = type === 'pie' ? max : max + span * 0.15;
-  const x = i => pts.length === 1 ? W / 2 : pad + i * (W - pad * 2) / (pts.length - 1);
   const y = v => H - pad - (v - lo) / ((hi - lo) || 1) * (H - pad * 2);
   let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="background:#fff;">`;
-  // grid
   for (let g = 0; g <= 4; g++) {
     const gy = pad + g * (H - pad * 2) / 4;
     svg += `<line x1="${pad}" y1="${gy}" x2="${W - pad}" y2="${gy}" stroke="#eef0f3" stroke-width="1"/>`;
   }
-  if (type === 'bar') {
-    const bw = Math.max(8, (W - pad * 2) / pts.length * 0.5);
-    pts.forEach((p, i) => {
-      const v = Number(p.value);
-      svg += `<rect x="${x(i) - bw / 2}" y="${y(v)}" width="${bw}" height="${H - pad - y(v)}" rx="3" fill="#5aa36f"/>`;
-      svg += `<text x="${x(i)}" y="${y(v) - 6}" text-anchor="middle" font-size="10" fill="#2b3445">${v}</text>`;
-      svg += `<text x="${x(i)}" y="${H - pad + 16}" text-anchor="middle" font-size="9" fill="#8a909b">${labels[i]}</text>`;
-    });
-  } else if (type === 'pie') {
-    const cx = W / 2, cy = H / 2, r = Math.min(W, H) / 2 - pad;
-    let acc = 0; const total = vals.reduce((a, b) => a + b, 0) || 1;
-    const colors = ['#5aa36f','#3b6ef5','#f5a623','#e05b5b','#9b6df5','#2bb3c0'];
-    pts.forEach((p, i) => {
-      const frac = Number(p.value) / total;
+  if (type === 'pie') {
+    // 取每个序列最新值做构成
+    const cx = W / 2, cy = H / 2 - 6, r = Math.min(W, H) / 2 - pad - 6;
+    let acc = 0; const slices = series.map((s2, i) => ({ label: s2.label, val: Number((s2.points || []).slice(-1)[0]?.value || 0), c: colors[i % colors.length] })).filter(z => z.val > 0);
+    const totalV = slices.reduce((a, z) => a + z.val, 0) || 1;
+    slices.forEach((z) => {
+      const frac = z.val / totalV;
       const a0 = acc * Math.PI * 2 - Math.PI / 2, a1 = (acc + frac) * Math.PI * 2 - Math.PI / 2;
       acc += frac;
       const large = (a1 - a0) > Math.PI ? 1 : 0;
-      svg += `<path d="M${cx},${cy} L${cx + r * Math.cos(a0)},${cy + r * Math.sin(a0)} A${r},${r} 0 ${large} 1 ${cx + r * Math.cos(a1)},${cy + r * Math.sin(a1)} Z" fill="${colors[i % colors.length]}"/>`;
+      svg += `<path d="M${cx},${cy} L${cx + r * Math.cos(a0)},${cy + r * Math.sin(a0)} A${r},${r} 0 ${large} 1 ${cx + r * Math.cos(a1)},${cy + r * Math.sin(a1)} Z" fill="${z.c}"/>`;
       const am = (a0 + a1) / 2;
       svg += `<text x="${cx + r * 0.6 * Math.cos(am)}" y="${cy + r * 0.6 * Math.sin(am)}" text-anchor="middle" font-size="10" fill="#fff">${Math.round(frac * 100)}%</text>`;
-      svg += `<rect x="${pad + (i % 3) * 150}" y="${H - 12}" width="10" height="10" fill="${colors[i % colors.length]}"/>`;
-      svg += `<text x="${pad + (i % 3) * 150 + 14}" y="${H - 3}" font-size="10" fill="#3a4252">${labels[i]||('项'+(i+1))}: ${p.value}${unit}</text>`;
     });
+    slices.forEach((z, i) => {
+      svg += `<rect x="${pad + (i % 3) * 150}" y="${H - 10}" width="10" height="10" fill="${z.c}"/>`;
+      svg += `<text x="${pad + (i % 3) * 150 + 14}" y="${H - 1}" font-size="10" fill="#3a4252">${escapeHtml(z.label)}</text>`;
+    });
+    svg += '</svg>';
+    return svg;
+  }
+  if (type === 'bar') {
+    const n = series.length;
+    const slot = dates.length <= 1 ? (W - pad * 2) : (W - pad * 2) / dates.length;
+    const bw = Math.max(6, Math.min(28, slot * 0.7 / n));
+    series.forEach((s2, si) => {
+      const c = colors[si % colors.length];
+      (s2.points || []).forEach(p => {
+        const v = Number(p.value);
+        const cx2 = x(p.date) + (si - (n - 1) / 2) * (bw + 1);
+        svg += `<rect x="${cx2 - bw / 2}" y="${y(v)}" width="${bw}" height="${H - pad - y(v)}" rx="2" fill="${c}"/>`;
+        svg += `<text x="${cx2}" y="${y(v) - 5}" text-anchor="middle" font-size="9" fill="#2b3445">${v}</text>`;
+      });
+    });
+    dates.forEach(dt => svg += `<text x="${x(dt)}" y="${H - pad + 16}" text-anchor="middle" font-size="9" fill="#8a909b">${(dt||'').slice(5)}</text>`);
   } else {
-    // line
-    let path = '', dots = '';
-    pts.forEach((p, i) => {
-      const px = x(i), py = y(Number(p.value));
-      path += (i === 0 ? 'M' : 'L') + px + ',' + py + ' ';
-      dots += `<circle cx="${px}" cy="${py}" r="3.5" fill="#3b6ef5"/>`;
-      dots += `<text x="${px}" y="${py - 8}" text-anchor="middle" font-size="10" fill="#2b3445">${p.value}</text>`;
-      dots += `<text x="${px}" y="${H - pad + 16}" text-anchor="middle" font-size="9" fill="#8a909b">${labels[i]}</text>`;
+    // line：多序列不同颜色
+    series.forEach((s2, si) => {
+      const c = colors[si % colors.length];
+      let path = '', dots = '';
+      (s2.points || []).forEach(p => {
+        const px = x(p.date), py = y(Number(p.value));
+        path += (path ? 'L' : 'M') + px + ',' + py + ' ';
+        dots += `<circle cx="${px}" cy="${py}" r="3.5" fill="${c}"/>`;
+        dots += `<text x="${px}" y="${py - 8}" text-anchor="middle" font-size="9" fill="#2b3445">${p.value}</text>`;
+      });
+      svg += `<path d="${path}" fill="none" stroke="${c}" stroke-width="2"/>` + dots;
     });
-    svg += `<path d="${path}" fill="none" stroke="#3b6ef5" stroke-width="2"/>` + dots;
+    dates.forEach(dt => svg += `<text x="${x(dt)}" y="${H - pad + 16}" text-anchor="middle" font-size="9" fill="#8a909b">${(dt||'').slice(5)}</text>`);
+  }
+  // 图例
+  if (series.length > 1) {
+    series.forEach((s2, si) => {
+      const lx = pad + (si % 3) * 150, ly = 14 + Math.floor(si / 3) * 14;
+      svg += `<line x1="${lx}" y1="${ly}" x2="${lx + 16}" y2="${ly}" stroke="${colors[si % colors.length]}" stroke-width="3"/>`;
+      svg += `<text x="${lx + 20}" y="${ly + 3}" font-size="10" fill="#3a4252">${escapeHtml(s2.label)}</text>`;
+    });
   }
   svg += '</svg>';
   return svg;
 }
+
+function closeChart(e) { if (e.target.id === 'chartModalBg') document.getElementById('chartModalBg').style.display = 'none'; }
 
 function closeChart(e) { if (e.target.id === 'chartModalBg') document.getElementById('chartModalBg').style.display = 'none'; }
 
@@ -816,7 +875,7 @@ function applyPending(d) {
   // 子对话变更确认弹窗
   if (d && d.kind === 'CHANGE_PROPOSAL' && current.type === 'sub') {
     const p = d.payload || {}; p.proposalId = d.proposalId;
-    if (!document.getElementById('proposalModalBg').style.display.includes('flex')) {
+    if (!p.empty && !previewIsEmpty(p) && !document.getElementById('proposalModalBg').style.display.includes('flex')) {
       showProposal(p);
     }
   } else if (!d && current.type === 'sub') {
@@ -887,6 +946,76 @@ function startSyncTimer() {
 }
 
 let lastTasksResp = null;
+
+// ===== 外部计费工具开关（二档，按会话；只能在此按钮设置，对话不可改）=====
+let infoModeOptions = {};
+let infoModeCurrent = 'ENABLED';
+let infoModeDraft = 'ENABLED';
+function infoModeQuery() {
+  const p = new URLSearchParams();
+  p.set('sessionType', current.type);
+  if (current.subSessionId) p.set('subSessionId', current.subSessionId);
+  return p.toString();
+}
+async function loadInfoMode() {
+  try {
+    const d = await (await fetch('/api/info-source-mode?' + infoModeQuery())).json();
+    infoModeCurrent = d.mode || 'ENABLED';
+    infoModeOptions = d.options || {};
+    document.getElementById('infoModeLabel').textContent = shortModeLabel(d.mode, d.label);
+  } catch (e) {}
+}
+function openInfoModeEditor() {
+  infoModeDraft = infoModeCurrent;
+  document.getElementById('infoModeScope').textContent =
+    current.type === 'sub' ? document.getElementById('chatTitle').textContent.replace(/^🎯\s*/,'') : '主对话';
+  const list = document.getElementById('infoModeList');
+  list.innerHTML = '';
+  Object.entries(infoModeOptions).forEach(([key, desc]) => {
+    const checked = key === infoModeDraft ? 'checked' : '';
+    const div = document.createElement('label');
+    div.dataset.mode = key;
+    div.style.cssText = 'display:flex;gap:10px;align-items:flex-start;padding:10px;border:1px solid #d8e2ff;border-radius:8px;cursor:pointer;background:' + (key===infoModeDraft?'#f4f8ff':'#fff');
+    div.innerHTML = `<input type="radio" name="infoModeRadio" value="${key}" ${checked} style="margin-top:3px;">
+      <div><div style="font-weight:600;">${desc.split('：')[0]}</div>
+      <div style="font-size:12px;color:#8a909b;margin-top:2px;">${desc.split('：')[1]||''}</div></div>`;
+    div.querySelector('input').onchange = e => {
+      infoModeDraft = e.target.value;
+      // 只更新高亮，不重建 DOM（重建会让点击的单选框丢失）
+      list.querySelectorAll('label').forEach(l => {
+        const on = l.dataset.mode === infoModeDraft;
+        l.style.background = on ? '#f4f8ff' : '#fff';
+      });
+    };
+    list.appendChild(div);
+  });
+  document.getElementById('infoModeModalBg').classList.add('show');
+}
+async function saveInfoMode() {
+  try {
+    const res = await fetch('/api/info-source-mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionType: current.type,
+        subSessionId: current.subSessionId ? String(current.subSessionId) : '',
+        mode: infoModeDraft,
+      }),
+    });
+    const d = await res.json();
+    infoModeCurrent = d.mode || infoModeDraft;
+    document.getElementById('infoModeLabel').textContent = shortModeLabel(d.mode, d.label);
+  } catch (e) {}
+  document.getElementById('infoModeModalBg').classList.remove('show');
+}
+
+// 按钮上用短标签：开启 / 关闭；弹窗里仍用完整描述
+function shortModeLabel(mode, fullLabel) {
+  if (mode === 'DISABLED' || mode === 'LOCAL_ONLY') return '关闭';
+  if (mode === 'ENABLED' || mode === 'EXTERNAL_FIRST' || mode === 'AUTO') return '开启';
+  return fullLabel || '开启';
+}
+
 async function openFocusEditor() {
   const sc = scenarios.find(s => s.type === currentScenarioType());
   if (!sc) return;
@@ -1239,6 +1368,7 @@ function refreshInputFromVoice() {
   const input = document.getElementById('input');
   const recognized = (VOICE.baseText ? VOICE.baseText + ' ' : '') + VOICE.finalText;
   input.value = recognized;
+  autoGrow(input);
 }
 
 function stopVoice() {
@@ -1345,7 +1475,9 @@ function editGoalProposal(btn) {
   box.querySelector('.gc-send').onclick = () => {
     const v = ta.value.trim();
     if (!v) { ta.focus(); return; }
-    document.getElementById('input').value = v;
+    const mainInput = document.getElementById('input');
+    mainInput.value = v;
+    autoGrow(mainInput);
     document.getElementById('sendBtn').click();
   };
   ta.onkeydown = (e) => {
@@ -1482,12 +1614,29 @@ function proposalSection(title, icon, items) {
   </div>`;
 }
 
+// 变更预览是否实质为空（后端 empty 字段缺失时的前端兜底，避免无变更也弹窗）
+function previewIsEmpty(p) {
+  if (!p) return true;
+  const nonEmpty = v => Array.isArray(v) ? v.length > 0 : (v != null && v !== '' && !(typeof v === 'object' && Object.keys(v).length === 0));
+  return !nonEmpty(p.fields) && !nonEmpty(p.focusAdded) && !nonEmpty(p.focusRemoved)
+    && !nonEmpty(p.tasksAdded) && !nonEmpty(p.tasksUpdated) && !nonEmpty(p.tasksRemoved)
+    && !nonEmpty(p.tasksCompleted) && !nonEmpty(p.tasksPlanned)
+    && !nonEmpty(p.memories) && !nonEmpty(p.metricCards) && !nonEmpty(p.metricPoints) && !nonEmpty(p.metricRemoved);
+}
+
 function showProposal(p) {
   if (!p) return;
   const subId = current.subSessionId;
   const body = document.getElementById('proposalBody');
-  const sections = [];
+  body.innerHTML = previewSectionsHtml(p);
+  body.dataset.proposalId = p.proposalId;
+  body.dataset.subId = subId;
+  document.getElementById('proposalModalBg').style.display = 'flex';
+}
 
+// 变更内容渲染（弹窗与对话内只读溯源卡共用），返回各分组 HTML
+function previewSectionsHtml(p) {
+  const sections = [];
   const fields = (p.fields || []).map(f =>
     `<div><span style="color:#8a909b;">${f.label}：</span>${f.oldValue ? `<span style="color:#b0b5bd;text-decoration:line-through;">${f.oldValue}</span> → ` : ''}<b>${f.newValue}</b></div>`);
   sections.push(proposalSection('目标信息', '🎯', fields));
@@ -1521,7 +1670,6 @@ function showProposal(p) {
   (p.tasksRemoved || []).forEach(t => tasks.push(`<div><span style="color:#b56800;">－</span> ${t}</div>`));
   sections.push(proposalSection('待办变更', '📋', tasks));
 
-  // 新增关注项将要生成的待办（动态预演，确认后才创建）
   const planned = [];
   (p.tasksPlanned || []).forEach(t => planned.push(taskLine(t)));
   if (planned.length) {
@@ -1529,16 +1677,41 @@ function showProposal(p) {
   }
   sections.push(proposalSection('待新建待办', '✨', planned));
 
-  // 可视化指标卡/数据点
   const metricSec = [];
   (p.metricCards || []).forEach(m => metricSec.push(`<div>📊 <b>${escapeHtml(m)}</b></div>`));
   (p.metricPoints || []).forEach(m => metricSec.push(`<div>· 记录数据点：${escapeHtml(m)}</div>`));
+  (p.metricRemoved || []).forEach(m => metricSec.push(`<div><span style="color:#b56800;">🗑 删除图表：</span>${escapeHtml(m)}</div>`));
   if (metricSec.length) sections.push(proposalSection('数据卡片', '📈', metricSec));
 
-  body.innerHTML = sections.join('');
-  body.dataset.proposalId = p.proposalId;
-  body.dataset.subId = subId;
-  document.getElementById('proposalModalBg').style.display = 'flex';
+  return sections.join('');
+}
+
+// 对话内只读“数据变更溯源卡”：挂在触发变更的助手消息下方，仅展示 old→new 与采纳状态，无按钮
+function appendChangeTrail(node, trail) {
+  if (!node || !trail || node.querySelector('.change-trail')) return;
+  const p = trail.preview || {};
+  if (previewIsEmpty(p)) return;
+  const color = trail.status === 'APPLIED' ? '#1a9b5c'
+    : trail.status === 'DISCARDED' ? '#b56800'
+    : trail.status === 'EXPIRED' ? '#8a909b' : '#3b6ef5';
+  const box = document.createElement('div');
+  box.className = 'change-trail';
+  const head = document.createElement('div');
+  head.className = 'ct-head';
+  head.innerHTML = `📝 数据变更 · <b style="color:${color};">${escapeHtml(trail.statusText || '')}</b>`
+    + `<span class="ct-toggle" style="margin-left:auto;color:#8a909b;font-weight:400;">展开 ▾</span>`;
+  const body = document.createElement('div');
+  body.className = 'ct-body';
+  body.style.display = 'none';
+  body.innerHTML = previewSectionsHtml(p);
+  head.onclick = () => {
+    const open = body.style.display !== 'none';
+    body.style.display = open ? 'none' : 'block';
+    head.querySelector('.ct-toggle').textContent = open ? '展开 ▾' : '收起 ▴';
+  };
+  box.appendChild(head);
+  box.appendChild(body);
+  node.appendChild(box);
 }
 
 async function applyProposal() {
@@ -1562,6 +1735,14 @@ async function discardProposal() {
   try { await fetch(`/api/sub-sessions/${subId}/proposals/${id}/discard`, { method: 'POST' }); } catch (e) {}
 }
 
+function onChatKeydown(e) {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+}
+function autoGrow(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+}
+
 async function send() {
   if (sending) return;
   const input = document.getElementById('input');
@@ -1570,8 +1751,11 @@ async function send() {
   sending = true;
   document.getElementById('sendBtn').disabled = true;
   input.value = '';
-  addBubble('user', text);
+  autoGrow(input);
+  const userBubble = addBubble('user', text);
+  userBubble.dataset.streaming = '1';
   const bubble = addBubble('assistant', '');
+  bubble.dataset.streaming = '1';
   bubble.textContent = '';
   // 思考框 + 正式回答分离
   let reasoningBox = null;
@@ -1666,10 +1850,10 @@ async function send() {
       }
     }
     answer.textContent = acc;
-    if (pendingProposal && current.type === 'sub') {
+    if (pendingProposal && current.type === 'sub' && !pendingProposal.empty && !previewIsEmpty(pendingProposal)) {
       showProposal(pendingProposal);
-      pendingProposal = null;
     }
+    pendingProposal = null;
     if (current.type === 'sub') { loadTasks(); updatePregnancyHeader(current.subSessionId); loadMaterials(current.subSessionId); }
     loadPendingKnowledge();
   } catch (e) {

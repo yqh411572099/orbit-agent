@@ -14,6 +14,8 @@ public class SubSession {
     /** 可视化指标卡定义 JSON：[{key,label,unit,chartType}]，由 LLM 在建目标/对话中声明。 */
     private String metricDefs;
     private SubSessionStatus status;
+    /** 信息获取档位；null 视为默认 AUTO。只能由用户界面配置，对话不可改。 */
+    private InfoSourceMode infoSourceMode;
     private final Instant createdAt;
     private Instant updatedAt;
 
@@ -49,6 +51,8 @@ public class SubSession {
     public String getMetricDefs() { return metricDefs; }
     public void setMetricDefs(String metricDefs) { this.metricDefs = metricDefs; }
     public SubSessionStatus getStatus() { return status; }
+    public InfoSourceMode getInfoSourceMode() { return infoSourceMode == null ? InfoSourceMode.ENABLED : infoSourceMode; }
+    public void setInfoSourceMode(InfoSourceMode infoSourceMode) { this.infoSourceMode = infoSourceMode; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }

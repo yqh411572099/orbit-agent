@@ -26,9 +26,10 @@ public class LlmConfig {
         String apiKey = env.getProperty("spring.ai.openai.api-key", "");
         String baseUrl = env.getProperty("spring.ai.openai.base-url", "");
         String model = env.getProperty("spring.ai.openai.chat.options.model", "");
+        String lightModel = env.getProperty("spring.ai.openai.chat.options.light-model", "");
         ChatClient.Builder builder = builderProvider.getIfAvailable();
         if (apiKey != null && !apiKey.isBlank() && builder != null) {
-            return new SpringAiLlmAdapter(builder, mapper, apiKey, baseUrl, model);
+            return new SpringAiLlmAdapter(builder, mapper, apiKey, baseUrl, model, lightModel);
         }
         return new NoopLlmAdapter();
     }

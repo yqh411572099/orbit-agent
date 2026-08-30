@@ -70,7 +70,10 @@ public class FocusAreaAppService {
         return note;
     }
 
-    /** 合并写入自定义关注项 key→中文label，并重新渲染 collectedInfo（不触发时间轴变动）。 */
+    /**
+     * 写入自定义关注项 key→中文label，并重新渲染 collectedInfo（不触发时间轴变动）。
+     * value 为 null/空白时表示删除该 key（用于清理脏 key）。
+     */
     @Transactional
     public void putCustomLabels(Long subSessionId, Map<String, String> labels) {
         if (labels == null || labels.isEmpty()) return;
@@ -79,7 +82,11 @@ public class FocusAreaAppService {
         if (!scenarioRegistry.supports(sub.getScenarioType())) return;
         ScenarioDomain domain = scenarioRegistry.get(sub.getScenarioType());
         Map<String, String> customLabels = CustomFocusLabels.read(sub);
-        labels.forEach((k, v) -> { if (k != null && v != null && !v.isBlank()) customLabels.put(k, v); });
+        labels.forEach((k, v) -> {
+            if (k == null || k.isBlank()) return;
+            if (v == null || v.isBlank()) customLabels.remove(k);
+            else customLabels.put(k, v);
+        });
         CustomFocusLabels.write(sub, customLabels);
         ScenarioStateSupport.ScenarioState state =
                 ScenarioStateSupport.parse(domain, sub.getCollectedInfo(), customLabels);

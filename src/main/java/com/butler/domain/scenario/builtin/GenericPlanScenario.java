@@ -62,9 +62,4 @@ public class GenericPlanScenario implements ScenarioDomain {
                 6. 不要编造外部链接，materials 给空数组。""";
     }
 
-    @Override
-    public List<String> toolCategories() {
-        // 通用目标的首次规划以模型分析为主，不强制联网（更快）；子对话中仍可按需调用。
-        return List.of();
-    }
 }

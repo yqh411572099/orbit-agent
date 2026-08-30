@@ -17,6 +17,8 @@ public class PendingEvent {
     private final String eventType;
     private final String payload;
     private String preview;
+    /** 触发该事件的助手消息 ID（用于在对话里挂载只读变更溯源卡）。 */
+    private Long messageId;
     private Status status;
     private final Instant expiresAt;
     private final Instant createdAt;
@@ -44,6 +46,8 @@ public class PendingEvent {
     public String getPayload() { return payload; }
     public String getPreview() { return preview; }
     public void setPreview(String preview) { this.preview = preview; this.updatedAt = Instant.now(); }
+    public Long getMessageId() { return messageId; }
+    public void setMessageId(Long messageId) { this.messageId = messageId; this.updatedAt = Instant.now(); }
     public Status getStatus() { return status; }
     public void setStatus(Status status) { this.status = status; this.updatedAt = Instant.now(); }
     public Instant getExpiresAt() { return expiresAt; }

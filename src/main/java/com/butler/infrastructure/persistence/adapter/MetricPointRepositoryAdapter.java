@@ -36,6 +36,11 @@ public class MetricPointRepositoryAdapter implements MetricPointRepository {
     }
 
     @Override
+    public void delete(MetricPoint p) {
+        if (p.getId() != null) jpa.deleteById(p.getId());
+    }
+
+    @Override
     public List<MetricPoint> findBySubSessionId(Long subSessionId) {
         return jpa.findBySubSessionIdOrderByValueDateAscIdAsc(subSessionId).stream()
                 .map(this::toDomain).toList();

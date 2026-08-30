@@ -25,6 +25,8 @@ public class PendingEventPO {
     @Lob
     @Column(name = "preview")
     private String preview;
+    @Column(name = "message_id")
+    private Long messageId;
     @Column(nullable = false, length = 16)
     private String status;
     @Column(name = "expires_at", nullable = false)
@@ -48,6 +50,8 @@ public class PendingEventPO {
     public void setPayload(String payload) { this.payload = payload; }
     public String getPreview() { return preview; }
     public void setPreview(String preview) { this.preview = preview; }
+    public Long getMessageId() { return messageId; }
+    public void setMessageId(Long messageId) { this.messageId = messageId; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public Instant getExpiresAt() { return expiresAt; }

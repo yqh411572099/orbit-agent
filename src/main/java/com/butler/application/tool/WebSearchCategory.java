@@ -8,6 +8,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class WebSearchCategory extends ToolCategory {
     public WebSearchCategory(WebSearchTool webSearchTool) {
-        super("WebSearch", "从开放互联网检索最新信息：政策、补贴、办事流程、机构动态", List.of(webSearchTool));
+        super("WebSearch", "从开放互联网检索模型之外的信息：当答案依赖会变化的事实、需要来源依据、或用户要求联网/核实时使用", List.of(webSearchTool));
     }
 }

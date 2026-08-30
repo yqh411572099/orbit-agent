@@ -1,6 +1,7 @@
 package com.butler.memory;
 
 import com.butler.domain.attribute.AttributeRenderer;
+import com.butler.application.MetricAppService;
 import com.butler.application.ScenarioStateSupport;
 import com.butler.domain.model.*;
 import com.butler.domain.repository.MissionRepository;
@@ -30,17 +31,20 @@ public class MemoryContextAssembler {
     private final TaskRepository taskRepository;
     private final MissionRepository missionRepository;
     private final ScenarioRegistry scenarioRegistry;
+    private final MetricAppService metricAppService;
 
     public MemoryContextAssembler(MemoryPermissionService permissionService,
                                   SubSessionRepository subSessionRepository,
                                   TaskRepository taskRepository,
                                   MissionRepository missionRepository,
-                                  ScenarioRegistry scenarioRegistry) {
+                                  ScenarioRegistry scenarioRegistry,
+                                  MetricAppService metricAppService) {
         this.permissionService = permissionService;
         this.subSessionRepository = subSessionRepository;
         this.taskRepository = taskRepository;
         this.missionRepository = missionRepository;
         this.scenarioRegistry = scenarioRegistry;
+        this.metricAppService = metricAppService;
     }
 
     public String assemble(Long userId, SessionType type, Long subSessionId) {
@@ -77,6 +81,24 @@ public class MemoryContextAssembler {
                 if (visible != null && !visible.isBlank()) {
                     sb.append("\n【本子任务收集的用户信息】\n").append(visible).append("\n");
                 }
+            }
+
+            // 已确认的结构化指标当前值（图表/指标卡数据，用户确认后才写入）。
+            // 这是“当前事实”的权威来源；用户当轮新报、尚未确认的值不在此列，不能当作当前值。
+            try {
+                List<MetricAppService.Point> points = metricAppService.latest(subSessionId);
+                List<String> confirmed = points.stream()
+                        .filter(p -> p.value() != null)
+                        .map(p -> "- " + p.label() + "：" + p.value()
+                                + (p.unit() == null || p.unit().isBlank() ? "" : " " + p.unit())
+                                + (p.date() == null ? "" : "（" + p.date() + "）"))
+                        .toList();
+                if (!confirmed.isEmpty()) {
+                    sb.append("\n【已确认的当前指标值（以此为准，用户当轮新报但未确认的数值不算）】\n");
+                    confirmed.forEach(c -> sb.append(c).append("\n"));
+                }
+            } catch (Exception ignored) {
+                // 指标读取失败不阻断对话
             }
         }
 

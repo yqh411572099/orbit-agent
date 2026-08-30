@@ -7,6 +7,7 @@ import java.util.Optional;
 
 public interface MetricPointRepository {
     MetricPoint save(MetricPoint point);
+    void delete(MetricPoint point);
     List<MetricPoint> findBySubSessionId(Long subSessionId);
     Optional<Instant> findLastUpdatedAt(Long subSessionId);
     int deleteBySubSessionId(Long subSessionId);

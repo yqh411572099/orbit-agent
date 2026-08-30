@@ -90,9 +90,31 @@ public class SyncAppService {
         } else {
             List<RawChatLog> recent = rawChatLogRepository.findRecent(userId, type, subSessionId, PAGE_SIZE + 1);
             hasMore = recent.size() > PAGE_SIZE;
-            if (hasMore) recent = recent.subList(0, PAGE_SIZE);
-            // findRecent 内部已按 id 正序返回
+            // findRecent 返回升序（旧→新）；超限时丢弃最旧的一条，保留最新 PAGE_SIZE 条
+            if (hasMore) recent = recent.subList(recent.size() - PAGE_SIZE, recent.size());
             rows = recent;
+        }
+        // 变更溯源：该会话下所有已挂到消息的变更提案（含待确认/已采纳/未采纳），按消息 id 索引
+        PendingEvent.Scope scope = type == SessionType.MAIN ? PendingEvent.Scope.MAIN : PendingEvent.Scope.SUB;
+        Map<Long, Map<String, Object>> trailByMsg = new LinkedHashMap<>();
+        for (PendingEvent e : pendingEventRepository.findMessageLinked(userId, scope,
+                type == SessionType.MAIN ? null : subSessionId, PendingProposalStore.EVENT_TYPE)) {
+            if (e.getMessageId() == null) continue;
+            Map<String, Object> trail = new LinkedHashMap<>();
+            trail.put("proposalId", e.getId());
+            trail.put("status", e.getStatus().name());
+            trail.put("statusText", switch (e.getStatus()) {
+                case APPLIED -> "已采纳";
+                case DISCARDED -> "未采纳";
+                case EXPIRED -> "已过期";
+                default -> "待确认";
+            });
+            String previewJson = e.getPreview();
+            if (previewJson != null && !previewJson.isBlank()) {
+                try { trail.put("preview", objectMapper.readTree(previewJson)); }
+                catch (Exception ex) { trail.put("preview", null); }
+            }
+            trailByMsg.put(e.getMessageId(), trail);
         }
         Long lastId = afterId == null ? 0L : afterId;
         for (RawChatLog r : rows) {
@@ -102,6 +124,8 @@ public class SyncAppService {
             m.put("content", r.getContent());
             m.put("reasoning", r.getReasoning());
             m.put("createdAt", r.getCreatedAt() == null ? null : r.getCreatedAt().toString());
+            Map<String, Object> trail = r.getId() == null ? null : trailByMsg.get(r.getId());
+            if (trail != null) m.put("changeTrail", trail);
             msgs.add(m);
             if (r.getId() != null && r.getId() > lastId) lastId = r.getId();
         }
