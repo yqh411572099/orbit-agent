@@ -13,7 +13,7 @@
 
     <groupId>com.butler</groupId>
     <artifactId>butler</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2-SNAPSHOT</version>
     <name>butler</name>
     <description>多目标长期生命周期智能管家对话助手</description>
 
